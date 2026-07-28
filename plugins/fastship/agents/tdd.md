@@ -178,7 +178,7 @@ def test_バリデーション失敗で422が返る(
 
 1. Issue 本文の 🧪 テスト方針 / ✔️ 達成基準 を抽出
 2. `Agent` ツールで `subagent_type: "fastship:tdd"`（このエージェント）を呼び出し
-3. 生成されたテストファイルを `task dev:test -- acceptance/{module}/` で実行
+3. 生成されたテストファイルを、リポジトリのテスト実行方法で実行する (Taskfile があれば `task dev:test -- acceptance/{module}/` 等)
 4. **期待通り失敗することを確認** (Red)
 5. Phase 1 以降で実装し、テストを通す (Green)
 

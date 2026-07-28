@@ -64,8 +64,16 @@ CI の指摘（`[must]` があると Changes Requested になる）への対応�
 プロジェクト固有の定番違反は CI のセキュリティレビューの対象外なので、ローカルでチェックする。規約の単一情報源は各ファイルに集約しているので、ここでは節を列挙せず、変更があれば該当ファイルの全節を開いて diff を読み直し、違反はコミット前に修正する (SKILL.md に節を複製しないことでドリフトを防ぐ):
 
 ```bash
-# 規約はこのプラグインに同梱（プロジェクトの .claude/rules/ に同じ相対パスがあればそちらを優先）
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "${CLAUDE_SKILL_DIR}/../.." && pwd)}"
+# 規約はこのプラグインに同梱（プロジェクトの .claude/rules/ に同じ相対パスがあればそちらを優先）。
+# ${CLAUDE_PLUGIN_ROOT} は hooks.json 専用で Bash ツールでは展開されないため、導入先を実際に探す。
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
+if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
+  PLUGIN_ROOT=$(find "$HOME/.claude/plugins" "${CLAUDE_PROJECT_DIR:-.}/.claude/plugins" \
+    -maxdepth 6 -type d -path '*/fastship/*' -name rules 2>/dev/null | head -1)
+  PLUGIN_ROOT="${PLUGIN_ROOT%/rules}"
+fi
+# 解決に失敗したら黙って進まない（$PLUGIN_ROOT が空だと / 直下を指し、以降の Read が全て外れる）
+[ -d "${PLUGIN_ROOT:-/nonexistent}/rules" ] && echo "PLUGIN_ROOT=$PLUGIN_ROOT" || echo "PLUGIN_ROOT_NOT_FOUND"
 ```
 
 - `backend/src/**/*.py` の変更 → `$PLUGIN_ROOT/rules/backend.md`（および配下の domain / application ルール）

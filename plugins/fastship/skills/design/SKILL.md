@@ -27,8 +27,16 @@ gh issue view "$ISSUE_NUMBER" --json title,body,labels
 設計判断の基準にするため、着手前に以下を `Read` する。DDD ハンドブックは**このプラグインに同梱**されている（プロジェクトの `.claude/rules/` に同じ相対パスのルールがあればそちらを優先して読む）:
 
 ```bash
-# プラグインルートの解決（rules/ はこのスキルの 2 階層上）
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "${CLAUDE_SKILL_DIR}/../.." && pwd)}"
+# プラグインの導入先を特定する。${CLAUDE_PLUGIN_ROOT} は hooks.json 専用で Bash ツールでは
+# 展開されないため（${CLAUDE_SKILL_DIR} は公式に存在しない）、インストール先を実際に探す。
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
+if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
+  PLUGIN_ROOT=$(find "$HOME/.claude/plugins" "${CLAUDE_PROJECT_DIR:-.}/.claude/plugins" \
+    -maxdepth 6 -type d -path '*/fastship/*' -name rules 2>/dev/null | head -1)
+  PLUGIN_ROOT="${PLUGIN_ROOT%/rules}"
+fi
+# 解決に失敗したら黙って進まない（$PLUGIN_ROOT が空だと / 直下を指し、以降の Read が全て外れる）
+[ -d "${PLUGIN_ROOT:-/nonexistent}/rules" ] && echo "PLUGIN_ROOT=$PLUGIN_ROOT" || echo "PLUGIN_ROOT_NOT_FOUND"
 ```
 
 - `$PLUGIN_ROOT/rules/backend/src/domain/model/domain.md`（貧血症回避）

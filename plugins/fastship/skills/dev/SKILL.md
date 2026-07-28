@@ -40,6 +40,13 @@ git checkout -b "feature/issue-${ISSUE_NUMBER}"
 
 ブランチが既に存在する場合は `feature/issue-${ISSUE_NUMBER}-2` など連番でフォールバックする。
 
+### 2.5. 失敗するテストを先に書く（Red）
+
+Issue に `🧪 テスト方針`（入力 → 期待値）があり、リポジトリに受け入れテストの置き場がある場合、実装前に `Agent` ツールで `subagent_type: "fastship:tdd"` を呼び、テストスケルトンを生成させる。Issue 番号と達成基準・テスト方針を渡す。
+
+- 生成されたテストが**失敗すること**を確認してから実装に入る（通ってしまうなら、テストが要件を検証できていない）。
+- テスト方針が無い Issue（ドキュメント修正・設定変更など）や、受け入れテストの仕組みが無いリポジトリではスキップする。
+
 ### 3. 実装
 
 `Skill` ツールから `/feature-dev`（`feature-dev@claude-plugins-official`。**未インストールなら、そのまま自分で実装する** — このスキルの必須依存ではない）を呼び出して実装する。完了条件はリポジトリの CLAUDE.md に従う（lint / テストの通過、フックを `--no-verify` で迂回しない 等。`task style:check` / `task dev:test` は Taskfile があるリポジトリの例）。
@@ -49,6 +56,18 @@ git checkout -b "feature/issue-${ISSUE_NUMBER}"
 ### 3.5. ドメインモデル鑑定ゲート（PR 前）
 
 `backend/src/**/domain/**` または `**/application/**` に変更がある場合、PR を作る**前に** `Agent` ツールで `subagent_type: "fastship:domain-model-reviewer"` を呼び、DDD の意味論的スメル（貧血ドメイン・集約境界越え Tx・primitive obsession・ロジック漏れ・用語ドリフト）を鑑定する。Issue 番号を渡し、設計書と突き合わせさせる。
+
+**このとき DDD 規約の絶対パスを prompt に列挙して渡す。** プラグインはプロジェクト外に install されるためサブエージェントは `Glob` では規約を見つけられず、渡さないと要約だけで鑑定してしまう。パスが手元に無ければ、次で列挙できる:
+
+```bash
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
+if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
+  PLUGIN_ROOT=$(find "$HOME/.claude/plugins" "${CLAUDE_PROJECT_DIR:-.}/.claude/plugins" \
+    -maxdepth 6 -type d -path '*/fastship/*' -name rules 2>/dev/null | head -1)
+  PLUGIN_ROOT="${PLUGIN_ROOT%/rules}"
+fi
+ls "$PLUGIN_ROOT"/rules/backend/src/domain/model/*.md "$PLUGIN_ROOT"/rules/backend/src/application/application.md
+```
 
 - `PASS`（`[must]` 無し）→ ステップ 4 へ。
 - `CHANGES_REQUESTED`（`[must]` あり）→ **PR を作る前に自分で修正**する。集約メソッドへのロジック引き上げ・VO 化・イベント化など、鑑定士の直し方に従い、`task style:check` / `task dev:test` を通してから再度鑑定 → `PASS` になったらステップ 4 へ。

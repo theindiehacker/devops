@@ -27,11 +27,15 @@ fi
 sep='[[:space:];&|)]'
 scan=$(printf '%s' "$command" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
 
-# 区切り文字の直前で終わる書き方も捕まえる。`git commit -n` / `git push -n` は --no-verify と
-# 同じ効果、`-c core.hooksPath=...` はフック自体の差し替えなので、いずれも同列に扱う。
-if echo "$scan" | grep -qE -- "(^|[[:space:]])--no-verify($sep|$)" ||
-  { echo "$scan" | grep -qE "(^|$sep)git([[:space:]]+-[^[:space:]]+)*[[:space:]]+(commit|push)($sep|$)" &&
-    echo "$scan" | grep -qE -- "[[:space:]]-n($sep|$)"; } ||
+# `;` `&&` `||` `|` で区切られた各コマンドを 1 行ずつに割る。判定を 1 セグメントに閉じないと、
+# `git commit -m x && grep -n TODO` のような複合コマンドで、無関係な -n を git のものと
+# 誤認してブロックしてしまう。
+segments=$(printf '%s' "$scan" | sed -e 's/&&/\n/g' -e 's/||/\n/g' -e 's/[;&|]/\n/g')
+
+# `git commit -n` / `git push -n` は --no-verify と同じ効果なので同列に扱う。
+# grep -n / head -n のような他コマンドの -n は、セグメントが分かれているので巻き込まない。
+if echo "$segments" | grep -qE -- "(^|[[:space:]])--no-verify([[:space:]]|$)" ||
+  echo "$segments" | grep -qE "^[[:space:]]*git([[:space:]]+-[^[:space:]]+)*[[:space:]]+(commit|push)([[:space:]].*)?[[:space:]]-n([[:space:]]|$)" ||
   echo "$scan" | grep -qE -- "core\.hooksPath[[:space:]]*="; then
   cat >&2 <<'EOF'
 🚫 Git フックのバイパス (--no-verify / -n / core.hooksPath 上書き) は禁止されています。
@@ -52,7 +56,7 @@ fi
 
 # terraform -chdir=infra apply のように、サブコマンドの前にフラグが挟まる形も捕まえる。
 # tofu (OpenTofu) は terraform のドロップイン代替なので同じ扱いにする。
-if echo "$scan" | grep -qE "(^|$sep)(terraform|tofu)([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy)($sep|$)"; then
+if echo "$segments" | grep -qE "^[[:space:]]*(terraform|tofu)([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy)([[:space:]]|$)"; then
   cat >&2 <<'EOF'
 🚫 terraform apply / destroy のローカル実行は禁止です。
 

@@ -51,13 +51,27 @@ def parse_frontmatter(text: str) -> tuple[list[str], str]:
             continue
         paths_match = re.match(r"^paths:\s*(.*?)\s*$", line)
         if paths_match:
-            inline = paths_match.group(1)
+            inline = re.sub(r"\s*#.*$", "", paths_match.group(1)).strip()  # 行末コメントを落とす
             if not inline:  # ブロック形式。次行以降の "- glob" を拾う
                 in_paths = True
                 continue
             # フロー形式 paths: ["a", "b"] とスカラー paths: "a" も受ける
             in_paths = False
-            items = inline[1:-1].split(",") if inline[:1] == "[" and inline[-1:] == "]" else [inline]
+            if inline[:1] == "[" and inline[-1:] == "]":
+                items, depth, cur = [], 0, ""
+                for ch in inline[1:-1]:  # {a,b} 内のカンマで割らないよう波括弧の深さを見る
+                    if ch == "{":
+                        depth += 1
+                    elif ch == "}":
+                        depth = max(0, depth - 1)
+                    if ch == "," and depth == 0:
+                        items.append(cur)
+                        cur = ""
+                    else:
+                        cur += ch
+                items.append(cur)
+            else:
+                items = [inline]
             patterns.extend(i.strip().strip("\"'") for i in items if i.strip())
             continue
         if in_paths:

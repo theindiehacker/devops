@@ -22,21 +22,38 @@ FIX=false; RANGE=""
 for a in $ARGUMENTS; do
   [ "$a" = "--fix" ] && FIX=true || RANGE="$a"
 done
-# 変更ファイル取得は changed_files.sh に委譲（範囲省略時は未コミット変更、範囲指定でそのブランチ diff）。
-FILES=$(bash ${CLAUDE_SKILL_DIR}/scripts/changed_files.sh "$RANGE")
-if [ -z "$FILES" ]; then
+
+# プラグインの導入先を特定する。${CLAUDE_PLUGIN_ROOT} は hooks.json 専用で Bash ツールでは
+# 展開されないため（${CLAUDE_SKILL_DIR} は公式に存在しない）、インストール先を実際に探す。
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
+if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
+  PLUGIN_ROOT=$(find "$HOME/.claude/plugins" "${CLAUDE_PROJECT_DIR:-.}/.claude/plugins" \
+    -maxdepth 6 -type d -path '*/fastship/*' -name rules 2>/dev/null | head -1)
+  PLUGIN_ROOT="${PLUGIN_ROOT%/rules}"
+fi
+if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
+  echo "PLUGIN_ROOT_NOT_FOUND"
+elif ! FILES=$(bash "$PLUGIN_ROOT/skills/conform/scripts/changed_files.sh" "$RANGE"); then
+  # 変更ファイル取得の失敗（不正な diff 範囲・git リポジトリ外など）を「変更なし」と混同しない
+  echo "CHANGED_FILES_FAILED"
+elif [ -z "$FILES" ]; then
   echo "NO_CHANGED_FILES"
 else
   echo "FIX=$FIX RANGE=${RANGE:-<未コミット変更>}"
-  # マッチ判定は手で推測せず、同梱の突合スクリプトに委ねる
-  echo "$FILES" | tr '\n' '\0' | xargs -0 python3 ${CLAUDE_SKILL_DIR}/scripts/rules_matcher.py
+  # マッチ判定は手で推測せず、同梱の突合スクリプトに委ねる。
+  # xargs は ARG_MAX で分割起動しうるので、最後に sort -u で重複を潰す。
+  echo "$FILES" | tr '\n' '\0' \
+    | xargs -0 python3 "$PLUGIN_ROOT/skills/conform/scripts/rules_matcher.py" | sort -u
 fi
 ```
 
-- `NO_CHANGED_FILES` が出たら「変更なし」で終了する。
-- ルール行が 0 件なら「準拠チェック対象のルール無し」で終了する（`NO_CHANGED_FILES` の場合と区別して報告する）。
-- 出力は `ルールパス<TAB>要約` の行（プロジェクトルールは相対パス、プラグイン同梱ルールは絶対パス。どちらもそのまま `Read` できる）。
-- `FIX=true` なら以降のステップで修正まで適用する。
+出力の見方（この 3 つは必ず区別して報告する。どれも「違反なし」ではない）:
+
+- `PLUGIN_ROOT_NOT_FOUND` → プラグインの導入先を特定できていない。**チェックを実行できなかった**旨を報告して停止する。
+- `CHANGED_FILES_FAILED` → diff 範囲の指定ミスや git リポジトリ外。原因を報告して停止する。
+- `NO_CHANGED_FILES` → 変更ファイルが無い。「変更なし」で終了する。
+
+上記のいずれでもなければ、`ルールパス<TAB>要約` の行が並ぶ（プロジェクトルールは相対パス、プラグイン同梱ルールは絶対パス。どちらもそのまま `Read` できる）。行が 0 件なら「準拠チェック対象のルール無し」で終了する。`FIX=true` なら以降のステップで修正まで適用する。
 
 ### 2. マッチしたルール全文を Read
 
@@ -46,7 +63,7 @@ fi
 
 diff の各ファイルを対応ルールに照らし、違反を集める:
 
-- **(a) 意味論（DDD）**: `backend/src/**/domain/**` または `**/application/**` に変更があれば、`Agent` ツールで `subagent_type: "fastship:domain-model-reviewer"` を呼ぶ。対象 diff（と、あれば Issue 番号／設計書）を渡し、貧血ドメイン・集約境界越え Tx・primitive obsession・ロジック漏れ・用語ドリフト・境界キー欠落を鑑定させる。サブエージェントなのでルール全文はそちらで消費され、メイン会話は findings だけ受け取る。
+- **(a) 意味論（DDD）**: `backend/src/**/domain/**` または `**/application/**` に変更があれば、`Agent` ツールで `subagent_type: "fastship:domain-model-reviewer"` を呼ぶ。対象 diff・**ステップ 1 で得た DDD 規約の絶対パス（`rules/backend/src/domain/model/*.md` と `application.md`）を prompt に列挙**・（あれば）Issue 番号／設計書を渡し、貧血ドメイン・集約境界越え Tx・primitive obsession・ロジック漏れ・用語ドリフト・境界キー欠落を鑑定させる。**パスを渡さないと、サブエージェントは規約を見つけられず要約だけで鑑定してしまう**（プラグインはプロジェクト外にあり `Glob` で見つからないため）。サブエージェントなのでルール全文はそちらで消費され、メイン会話は findings だけ受け取る。
 - **(b) 機械チェック**: `task style:check`（ruff / mypy / deptry / import-linter）を走らせ、構造違反・型・未使用依存を拾う（Taskfile に定義がないリポジトリではスキップ）。CI でも走るが、ここで確認して取りこぼしを防ぐ。
 - **(c) ルール個別照合**: (a)(b) が拾わない規約は、ステップ 2 で読んだルール全文と diff を突き合わせて Claude 自身が照合する（例: `test.md` の「定数を使わずハードコード／テストクラス内プライベート・継承基底の禁止」、`application.md` の「メソッド 50 行以内」、`migration.md` の「テーブル追加時は core.py の tables に登録」、`dpo.md` の「生成には集約のみ」）。
 

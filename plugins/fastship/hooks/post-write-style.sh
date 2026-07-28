@@ -12,11 +12,12 @@ command -v task >/dev/null 2>&1 || exit 0
 cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 [ -f Taskfile.yml ] || [ -f Taskfile.yaml ] || exit 0
 
-# ここに来た時点で Taskfile は存在する。それでも --list-all が失敗するなら Taskfile 自体が
-# 壊れている (直前の編集で壊した可能性が高い) ので、黙って素通りさせず Claude に直させる。
+# ここに来た時点で Taskfile は存在する。それでも --list-all が失敗する場合、直前の編集で壊した
+# 可能性もあるが、元から解決できない includes を持つリポジトリも珍しくない。後者で全編集を
+# ブロックすると作業不能になるので、非ブロッキング (exit 0) で警告だけ出して抜ける。
 if ! tasks=$(task --list-all 2>&1); then
-  printf '%s\n' "Taskfile はあるのに task --list-all が失敗しました (Taskfile が壊れている可能性):" "$tasks" >&2
-  exit 2
+  printf '%s\n' "task --list-all が失敗したため style タスクをスキップします (Taskfile を確認してください):" "$tasks" >&2
+  exit 0
 fi
 
 run_if_defined() {  # $1=タスク名  失敗したら出力を stderr へ流して非ゼロを返す

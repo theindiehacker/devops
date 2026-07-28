@@ -359,10 +359,15 @@ Backlog 起票が単なる「思いつき投稿」になってしまう。ヒア
 
 ### 4. GitHub Issue の作成
 
-`gh` CLI で作成する（本文は改行を保つため一時ファイル経由で渡す）:
+`gh` CLI で作成する。本文は改行を保つため、**まず `Write` ツールで一時ファイルに書き出してから** `--body-file` で渡す:
+
+1. `Write` ツールで、ユーザーが承認した本文を `/tmp/backlog-body.md` に書き出す。
+2. Issue を作成する（`backlog` ラベルが未作成のリポジトリでは `gh label create` が必要なので、失敗したら作ってから再実行する）:
 
 ```bash
-gh issue create --title "{絵文字} {タイトル}" --label backlog --body-file /tmp/backlog-body.md
+gh issue create --title "{絵文字} {タイトル}" --label backlog --body-file /tmp/backlog-body.md \
+  || { gh label create backlog --description "リファインメント前の要望" --color ededed &&
+       gh issue create --title "{絵文字} {タイトル}" --label backlog --body-file /tmp/backlog-body.md; }
 ```
 
 GitHub MCP サーバーが使える環境なら `mcp__github__issue_write` でもよいが、`gh` を既定とする（このプラグインの他スキルはすべて `gh` を使っており、MCP サーバーは前提にしていない）。
