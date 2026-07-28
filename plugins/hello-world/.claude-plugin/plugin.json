@@ -1,0 +1,9 @@
+{
+  "name": "hello-world",
+  "description": "マーケットプレイス導入の動作確認用サンプルプラグイン。/hello-world:hello で挨拶を返す。",
+  "version": "0.1.0",
+  "author": {
+    "name": "theindiehacker",
+    "email": "gtaiyou24@gmail.com"
+  }
+}
