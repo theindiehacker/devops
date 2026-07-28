@@ -7,9 +7,13 @@ model: opus
 
 # テスト駆動開発 (tdd)
 
-Todo Issue または Plan に書かれた以下を読み取り、`backend/test/acceptance/{module}/test_{日本語のAPI名}.py` の
-**テストスケルトン** を生成する。実装は行わず、`/fastship:dev` が「失敗するテストを先に書く → 実装で通す」TDD 駆動で
-進められる起点を作るのが目的。
+Todo Issue または Plan に書かれた内容を読み取り、受け入れテストの **テストスケルトン** を生成する。
+実装は行わず、`/fastship:dev` が「失敗するテストを先に書く → 実装で通す」TDD 駆動で進められる起点を作るのが目的。
+
+> **着手前に対象リポジトリの構造を確認する。** 以下の記述は fastship.jp（Python / FastAPI の DDD バックエンド）を
+> 前提とした既定値であり、レイアウトが異なるリポジトリでは**既存テストの実際の慣習に合わせる**。
+> `Glob` で受け入れテストのルート（例 `**/test/acceptance/**`, `**/tests/**`）と `conftest.py` を探し、
+> 既存テストを 1〜2 本 `Read` してから書き始めること。既定と違っていたら既存側に合わせる。
 
 ## 入力 (呼び出し元から渡される or Issue から抽出する)
 
@@ -34,7 +38,8 @@ Issue 番号が渡された場合は `gh issue view {number} --json title,body` 
 
 `backend/test/acceptance/{module}/test_{日本語のAPI名}.py`
 
-- ファイル名は **テスト規約 (fastship プラグイン同梱 `rules/backend/test/test.md`。`${CLAUDE_PLUGIN_ROOT}/rules/` で解決し、プロジェクトの `.claude/rules/` に同じ相対パスがあればそちらを優先) § 命名規約** に従う (受け入れテストは `test_{日本語の説明}.py`)
+- ファイル名は **テスト規約 (fastship プラグイン同梱 `rules/backend/test/test.md`。プロジェクトの `.claude/rules/` に同じ相対パスがあればそちらを優先) § 命名規約** に従う (受け入れテストは `test_{日本語の説明}.py`)
+  - 規約の絶対パスは、呼び出し元が prompt で渡したもの、または既存テストファイルを `Read` した際に rules-guard フックが「正: <絶対パス>」として注入するものを使う (プラグインはプロジェクト外に install されるため `Glob` では見つからない)
 - 既存ファイルがある場合: 新しい `def test_...` メソッドを追加 (クラスは再利用)
 - 無ければ: ファイル新規作成
 
@@ -83,6 +88,10 @@ class Test{日本語のエンドポイント名}:
 ```
 
 ### 4. fixture 選択 (既存パターンから)
+
+**対象リポジトリの `conftest.py` を `Read` して、実在する fixture だけを使う。** 以下は fastship.jp の例で、
+そのまま存在するとは限らない。同等の fixture が無ければ、既存テストが使っている形に合わせる (存在しない
+fixture を前提にしたテストは動かない)。
 
 | 必要なもの | 使う fixture | 出典 |
 |----------|------------|------|
@@ -178,4 +187,4 @@ def test_バリデーション失敗で422が返る(
 - このエージェントは **テストスケルトンのみ生成**。実装はしない
 - 既存テストファイルへの追記時は、Edit ツールで該当クラス末尾に追加する (全体上書き禁止)
 - テスト規約 `rules/backend/test/test.md` (1 ファイル 1 テスト対象クラス / `__wrapped__` バイパス禁止 / DI override 第一推奨) を必ず守る
-- 生成後、`task style:check` を `Bash` ツールで実行し、ruff / mypy 違反が無いことを確認する
+- 生成後、リポジトリに `style:check` 相当のタスクがあれば (`task style:check` 等) `Bash` ツールで実行し、lint / 型違反が無いことを確認する (Taskfile が無いリポジトリではスキップ)

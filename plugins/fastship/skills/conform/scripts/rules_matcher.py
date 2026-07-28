@@ -19,6 +19,11 @@
 #     プロジェクト外なので絶対パス）。
 #     ファイルパスは絶対/相対どちらでも可（CLAUDE_PROJECT_DIR かカレントを基準に解決）。
 #     ルールファイル自身は対象外（自己参照を避ける）。
+#
+# 対応 Python は 3.9 以上（macOS 標準の /usr/bin/python3 が 3.9 系のため）。新しい型構文は
+# from __future__ import annotations で評価を遅延させて使う。
+from __future__ import annotations
+
 import os
 import re
 import sys
@@ -31,7 +36,8 @@ PLUGIN_RULES_DIR = Path(__file__).resolve().parents[3] / "rules"
 
 def parse_frontmatter(text: str) -> tuple[list[str], str]:
     """frontmatter から (paths の glob リスト, summary) を返す。無ければ ([], "")。"""
-    match = re.match(r"\A---\n(.*?)\n---", text, re.DOTALL)
+    # CRLF で保存されたルールファイル (Windows での編集や core.autocrlf) も同じに扱う
+    match = re.match(r"\A---\n(.*?)\n---", text.replace("\r\n", "\n"), re.DOTALL)
     if not match:
         return [], ""
     patterns: list[str] = []
@@ -43,8 +49,16 @@ def parse_frontmatter(text: str) -> tuple[list[str], str]:
             summary = summary_match.group(1).strip("\"'")
             in_paths = False
             continue
-        if re.match(r"^paths:\s*$", line):
-            in_paths = True
+        paths_match = re.match(r"^paths:\s*(.*?)\s*$", line)
+        if paths_match:
+            inline = paths_match.group(1)
+            if not inline:  # ブロック形式。次行以降の "- glob" を拾う
+                in_paths = True
+                continue
+            # フロー形式 paths: ["a", "b"] とスカラー paths: "a" も受ける
+            in_paths = False
+            items = inline[1:-1].split(",") if inline[:1] == "[" and inline[-1:] == "]" else [inline]
+            patterns.extend(i.strip().strip("\"'") for i in items if i.strip())
             continue
         if in_paths:
             if re.match(r"^\s*#", line):  # domain.md のようにリスト内コメントを許す
@@ -91,6 +105,19 @@ def glob_to_regex(pattern: str) -> re.Pattern[str]:
     return re.compile("^" + "".join(out) + "$")
 
 
+def read_rule(rule_file: Path) -> str:
+    """ルールファイルを読む。読めなければ stderr に理由を出して空文字を返す。
+
+    1 ファイルの破損（非 UTF-8 バイト / 権限エラー）で全ルールの突合が止まらないよう、
+    失敗はそのファイルだけに閉じ込める。
+    """
+    try:
+        return rule_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"rules_matcher: ルールを読めないためスキップ ({rule_file}): {e}", file=sys.stderr)
+        return ""
+
+
 def load_rules(project_dir: Path) -> list[tuple[str, list[str], str]]:
     """プラグイン同梱 + プロジェクトの全ルールを 1 回だけ読み、(パス, glob リスト, summary) の列を返す。
 
@@ -100,13 +127,13 @@ def load_rules(project_dir: Path) -> list[tuple[str, list[str], str]]:
     rules: dict[str, tuple[str, list[str], str]] = {}  # ルール相対パス -> entry
     if PLUGIN_RULES_DIR.is_dir():
         for rule_file in sorted(PLUGIN_RULES_DIR.rglob("*.md")):
-            patterns, summary = parse_frontmatter(rule_file.read_text(encoding="utf-8"))
+            patterns, summary = parse_frontmatter(read_rule(rule_file))
             rel = rule_file.relative_to(PLUGIN_RULES_DIR).as_posix()
             rules[rel] = (str(rule_file), patterns, summary)
     project_rules_dir = project_dir / ".claude" / "rules"
     if project_rules_dir.is_dir():
         for rule_file in sorted(project_rules_dir.rglob("*.md")):
-            patterns, summary = parse_frontmatter(rule_file.read_text(encoding="utf-8"))
+            patterns, summary = parse_frontmatter(read_rule(rule_file))
             rel = rule_file.relative_to(project_rules_dir).as_posix()
             rules[rel] = (rule_file.relative_to(project_dir).as_posix(), patterns, summary)
     return [rules[rel] for rel in sorted(rules)]

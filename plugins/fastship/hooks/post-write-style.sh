@@ -12,11 +12,18 @@ command -v task >/dev/null 2>&1 || exit 0
 cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 [ -f Taskfile.yml ] || [ -f Taskfile.yaml ] || exit 0
 
-tasks=$(task --list-all 2>/dev/null || true)
+# ここに来た時点で Taskfile は存在する。それでも --list-all が失敗するなら Taskfile 自体が
+# 壊れている (直前の編集で壊した可能性が高い) ので、黙って素通りさせず Claude に直させる。
+if ! tasks=$(task --list-all 2>&1); then
+  printf '%s\n' "Taskfile はあるのに task --list-all が失敗しました (Taskfile が壊れている可能性):" "$tasks" >&2
+  exit 2
+fi
 
 run_if_defined() {  # $1=タスク名  失敗したら出力を stderr へ流して非ゼロを返す
   local name="$1" out
-  echo "$tasks" | grep -qE "^\* ${name}(:|\s|$)" || return 0
+  # --list-all は "* name: 説明" 形式。前方一致で style:fix:frontend のような別タスクを
+  # 拾わないよう、名前の直後はコロン+空白か行末に限定する。
+  echo "$tasks" | grep -qE "^\* ${name}(:[[:space:]]|[[:space:]]|$)" || return 0
   if ! out=$(task "$name" 2>&1); then
     printf '%s\n' "task ${name} が失敗しました:" "$out" >&2
     return 1

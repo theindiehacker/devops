@@ -17,7 +17,7 @@ UI層で描画するデータを取得するためには「複数の集約」の
 逆に新規作成/更新操作を行う場合にはUI層で入力された値を「1つの集約」に対して新規作成/更新依頼することが一般的です。
 
  - 取得処理: 集約をUI層にそのまま返さずに DPO (Data Payload Object) に複数の集約インスタンスを詰めて、UI層に表示します
-   - DPOの実装方法: ${CLAUDE_PLUGIN_ROOT}/rules/backend/src/application/dpo.md
+   - DPOの実装方法: rules/backend/src/application/dpo.md
  - 新規作成/更新処理: コマンド(更新の指示情報をまとめた入れ物)を指定して、単一の集約を新規作成/更新します
 
 ```python
@@ -46,7 +46,7 @@ backend/src/**/application/**
 
 # 実装
 ## 禁止事項
-下記 2 つに触れたら、ロジックの引き上げ先の判断基準として `${CLAUDE_PLUGIN_ROOT}/rules/backend/src/domain/model/domain.md`（ドメイン貧血症）と `${CLAUDE_PLUGIN_ROOT}/rules/backend/src/domain/model/aggregate.md`（不変条件は集約メソッドで守る）を参照する。
+下記 2 つに触れたら、ロジックの引き上げ先の判断基準として `rules/backend/src/domain/model/domain.md`（ドメイン貧血症）と `rules/backend/src/domain/model/aggregate.md`（不変条件は集約メソッドで守る）を参照する。
 
  - プライベートメソッド&関数は実装する: アプリケーションサービスでプライベートメソッドおよび関数を実装する/したいケースは、大抵ドメイン層配下のドメインオブジェクトのメソッドとして定義すべきドメインロジックがアプリケーションサービスに漏れている時である。
  - メソッドが50行よりも長くなる: 収められないケースは「ドメインオブジェクトのメソッド化が漏れている」「必要なドメインオブジェクトが欠落している」ときである。ドメイン層の実装を見直してください。 

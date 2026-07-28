@@ -29,6 +29,6 @@ paths:
 
 ## アンチパターン
 
- - ❌ コマンド/DPO 以外の**ドメイン層で生 `str` / `int` を業務概念として持つ**（primitive obsession）。application の Command は例外的にプリミティブ（`${CLAUDE_PLUGIN_ROOT}/rules/backend/src/application/application.md`）だが、集約フィールド・メソッド引数・戻り値は VO にする。
+ - ❌ コマンド/DPO 以外の**ドメイン層で生 `str` / `int` を業務概念として持つ**（primitive obsession）。application の Command は例外的にプリミティブ（`rules/backend/src/application/application.md`）だが、集約フィールド・メソッド引数・戻り値は VO にする。
  - ❌ VO をミュータブルにする / セッターを生やす（VO は差し替えるもの、書き換えるものではない）。
  - ❌ バリデーションを VO の外（application サービスや resource）に散らす。VO の生成に集約する。

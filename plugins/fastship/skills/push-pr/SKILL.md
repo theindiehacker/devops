@@ -91,8 +91,8 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "${CLAUDE_SKILL_DIR}/../.." && pwd)}"
 ### 4. チェックリスト
 
 PR 作成前に以下を確認:
-- [ ] `task style:check` がパスする
-- [ ] `task dev:test` がパスする
+- [ ] lint / 型チェックがパスする（Taskfile があるリポジトリなら `task style:check`）
+- [ ] テストがパスする（Taskfile があるリポジトリなら `task dev:test`）
 - [ ] ベースブランチ (`$BASE_BRANCH`) の最新をマージ済み
 - [ ] コミットメッセージが適切
 - [ ] レビュアーを指定

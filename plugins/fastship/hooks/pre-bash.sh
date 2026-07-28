@@ -3,18 +3,38 @@
 # --no-verify の禁止 (フック・signing をバイパスしない)
 # ローカル terraform apply/destroy の禁止 (GitHub Actions から実行する)
 
-set -euo pipefail
+set -uo pipefail
+
+# このフックは「止めるため」に在るので、検査できない状態は素通しではなくブロックに倒す。
+# (jq 不在で set -e により exit 127 すると、非ブロッキング扱いになり禁止コマンドが通ってしまう)
+if ! command -v jq >/dev/null 2>&1; then
+  echo "🚫 jq が無いためコマンドを検査できません。jq を入れてください (brew install jq / apt install jq)。" >&2
+  exit 2
+fi
 
 event=$(cat)
-command=$(echo "$event" | jq -r '.tool_input.command // empty')
+if ! command=$(printf '%s' "$event" | jq -r '.tool_input.command // empty'); then
+  echo "🚫 hook 入力の JSON を解析できず、コマンドを検査できませんでした。" >&2
+  exit 2
+fi
 
 if [[ -z "$command" ]]; then
   exit 0
 fi
 
-if echo "$command" | grep -qE -- '(^|[[:space:]])--no-verify([[:space:]]|$)'; then
+# 検査対象は「引用符の外側」だけにする。コミットメッセージ本文に --no-verify と書いただけで
+# ブロックされる誤爆 (このプラグイン自身の説明コミットなど) を避けるため。
+sep='[[:space:];&|)]'
+scan=$(printf '%s' "$command" | sed -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
+
+# 区切り文字の直前で終わる書き方も捕まえる。`git commit -n` / `git push -n` は --no-verify と
+# 同じ効果、`-c core.hooksPath=...` はフック自体の差し替えなので、いずれも同列に扱う。
+if echo "$scan" | grep -qE -- "(^|[[:space:]])--no-verify($sep|$)" ||
+  { echo "$scan" | grep -qE "(^|$sep)git([[:space:]]+-[^[:space:]]+)*[[:space:]]+(commit|push)($sep|$)" &&
+    echo "$scan" | grep -qE -- "[[:space:]]-n($sep|$)"; } ||
+  echo "$scan" | grep -qE -- "core\.hooksPath[[:space:]]*="; then
   cat >&2 <<'EOF'
-🚫 --no-verify は禁止されています。
+🚫 Git フックのバイパス (--no-verify / -n / core.hooksPath 上書き) は禁止されています。
 
 【理由】
 Git pre-commit / pre-push フックは品質・型・テストの最終ゲート。バイパスすると CI で
@@ -30,7 +50,9 @@ EOF
   exit 2  # exit 2 = アクションをブロック
 fi
 
-if echo "$command" | grep -qE '(^|[[:space:]])terraform[[:space:]]+(apply|destroy)([[:space:]]|$)'; then
+# terraform -chdir=infra apply のように、サブコマンドの前にフラグが挟まる形も捕まえる。
+# tofu (OpenTofu) は terraform のドロップイン代替なので同じ扱いにする。
+if echo "$scan" | grep -qE "(^|$sep)(terraform|tofu)([[:space:]]+-[^[:space:]]+)*[[:space:]]+(apply|destroy)($sep|$)"; then
   cat >&2 <<'EOF'
 🚫 terraform apply / destroy のローカル実行は禁止です。
 

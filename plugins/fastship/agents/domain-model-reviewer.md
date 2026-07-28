@@ -32,7 +32,13 @@ gh issue view {number} --json comments \
 
 ## 鑑定の観点（意味論的スメル）
 
-判断基準の正は fastship プラグイン同梱の `rules/backend/src/domain/model/*.md`（このエージェント定義ファイルと同じプラグイン内。`${CLAUDE_PLUGIN_ROOT}/rules/` で解決し、プロジェクトの `.claude/rules/` に同じ相対パスがあればそちらを優先）。着手前にこれらを `Read` して基準を揃える（`aggregate.md` / `value-object.md` / `domain-event.md` / `repository.md` / `domain.md` / `domain_service.md` と `rules/backend/src/application/application.md`）。
+判断基準の正は fastship プラグイン同梱の DDD 規約（`rules/backend/src/domain/model/*.md` と `rules/backend/src/application/application.md`。プロジェクトの `.claude/rules/` に同じ相対パスがあればそちらを優先）。着手前にこれらを `Read` して基準を揃える。
+
+**規約ファイルの絶対パスの求め方**（プラグインはプロジェクト外に install されるため `Glob` では見つからない）:
+
+1. 呼び出し元（`/fastship:dev` / `/fastship:conform`）が prompt で絶対パスを渡していれば、それを使う。
+2. 渡されていなければ、**差分ファイルを `Read` する**。rules-guard フックが該当規約の要点を「正: <絶対パス>」付きで注入するので、そこに出た絶対パスを `Read` する。
+3. それでも得られない場合は、要点（注入された summary）だけで鑑定し、レポート冒頭に「規約全文を参照できなかった」と明記する。憶測の DDD 知識で `[must]` を出さない。
 
 ### 1. 貧血ドメイン (anemic-domain-model)
 - 集約/エンティティ/VO が**フィールドとゲッター/セッターだけで振る舞いメソッドが無い**。

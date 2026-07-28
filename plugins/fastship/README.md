@@ -39,8 +39,9 @@ Claude Code はプラグイン内の rules をネイティブに自動ロード�
 ## 前提
 
 - `gh` CLI (認証済み) — issue / design / dev / push-pr スキルが使用
-- `jq` — pre-bash フックと dev スキルが使用
-- `python3` — rules-guard フックと conform スキルが使用
+- `jq` — pre-bash フックが使用。**無いとフックが Bash をブロックする** (検査できない状態で素通しさせないため)
+- `python3` (3.9 以上) — rules-guard フックと conform スキルが使用
+- 任意: `feature-dev@claude-plugins-official` — `/fastship:dev` の実装ステップで使う。未インストールなら Claude が直接実装するので必須ではない
 - 一部スキルはリポジトリ側の資産を前提とする (無い場合は該当ステップをスキップして動く):
   - `.github/workflows/claude-code-review.yml` / `claude-fix-on-fail.yml` / `claude.yml` (`/fastship:dev` の自動レビューループ)
   - `.github/PULL_REQUEST_TEMPLATE.md` / `.github/ISSUE_TEMPLATE/todo.md` (`/fastship:push-pr` / `/fastship:issue`)

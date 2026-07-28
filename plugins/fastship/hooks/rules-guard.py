@@ -23,6 +23,11 @@
 #
 # フックは自己完結させる (外部モジュール import なし＝ .pyc も撒かない)。/fastship:conform スキルは
 # 自前の突合スクリプトを skills/conform/scripts に同梱しており、両者は同じルール群を正として独立に読む。
+#
+# 対応 Python は 3.9 以上 (macOS 標準の /usr/bin/python3 が 3.9 系のため)。新しい型構文は
+# from __future__ import annotations で評価を遅延させて使う。
+from __future__ import annotations
+
 import json
 import os
 import re
@@ -37,7 +42,8 @@ PLUGIN_RULES_DIR = Path(__file__).resolve().parent.parent / "rules"
 
 def parse_frontmatter(text: str) -> tuple[list[str], str]:
     """frontmatter から (paths の glob リスト, summary) を返す。無ければ ([], "")。"""
-    match = re.match(r"\A---\n(.*?)\n---", text, re.DOTALL)
+    # CRLF で保存されたルールファイル (Windows での編集や core.autocrlf) も同じに扱う
+    match = re.match(r"\A---\n(.*?)\n---", text.replace("\r\n", "\n"), re.DOTALL)
     if not match:
         return [], ""
     patterns: list[str] = []
@@ -49,8 +55,16 @@ def parse_frontmatter(text: str) -> tuple[list[str], str]:
             summary = summary_match.group(1).strip("\"'")
             in_paths = False
             continue
-        if re.match(r"^paths:\s*$", line):
-            in_paths = True
+        paths_match = re.match(r"^paths:\s*(.*?)\s*$", line)
+        if paths_match:
+            inline = paths_match.group(1)
+            if not inline:  # ブロック形式。次行以降の "- glob" を拾う
+                in_paths = True
+                continue
+            # フロー形式 paths: ["a", "b"] とスカラー paths: "a" も受ける
+            in_paths = False
+            items = inline[1:-1].split(",") if inline[:1] == "[" and inline[-1:] == "]" else [inline]
+            patterns.extend(i.strip().strip("\"'") for i in items if i.strip())
             continue
         if in_paths:
             if re.match(r"^\s*#", line):  # domain.md のようにリスト内コメントを許す
@@ -97,6 +111,19 @@ def glob_to_regex(pattern: str) -> re.Pattern[str]:
     return re.compile("^" + "".join(out) + "$")
 
 
+def read_rule(rule_file: Path) -> str:
+    """ルールファイルを読む。読めなければ stderr に理由を出して空文字を返す。
+
+    1 ファイルの破損 (非 UTF-8 バイト / 権限エラー) で全ルールの配信が止まらないよう、
+    失敗はそのファイルだけに閉じ込める。
+    """
+    try:
+        return rule_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"rules-guard: ルールを読めないためスキップ ({rule_file}): {e}", file=sys.stderr)
+        return ""
+
+
 def collect_rules(project_dir: Path) -> list[tuple[str, str, list[str], str]]:
     """(ack キー, 表示パス, globs, summary) の列を返す。
 
@@ -107,13 +134,13 @@ def collect_rules(project_dir: Path) -> list[tuple[str, str, list[str], str]]:
     rules: dict[str, tuple[str, str, list[str], str]] = {}  # rel -> entry
     if PLUGIN_RULES_DIR.is_dir():
         for rule_file in sorted(PLUGIN_RULES_DIR.rglob("*.md")):
-            patterns, summary = parse_frontmatter(rule_file.read_text(encoding="utf-8"))
+            patterns, summary = parse_frontmatter(read_rule(rule_file))
             rel = rule_file.relative_to(PLUGIN_RULES_DIR).as_posix()
             rules[rel] = (f"plugin__{rel}", str(rule_file), patterns, summary)
     project_rules_dir = project_dir / ".claude" / "rules"
     if project_rules_dir.is_dir():
         for rule_file in sorted(project_rules_dir.rglob("*.md")):
-            patterns, summary = parse_frontmatter(rule_file.read_text(encoding="utf-8"))
+            patterns, summary = parse_frontmatter(read_rule(rule_file))
             rel = rule_file.relative_to(project_rules_dir).as_posix()
             display = rule_file.relative_to(project_dir).as_posix()
             rules[rel] = (f"project__{rel}", display, patterns, summary)
@@ -121,7 +148,11 @@ def collect_rules(project_dir: Path) -> list[tuple[str, str, list[str], str]]:
 
 
 def main() -> int:
-    event = json.load(sys.stdin)
+    try:
+        event = json.load(sys.stdin)
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        print(f"rules-guard: hook 入力の JSON を解析できません ({e})", file=sys.stderr)
+        return 0
     file_path = (event.get("tool_input") or {}).get("file_path")
     if not file_path:
         return 0
@@ -150,9 +181,14 @@ def main() -> int:
     if not unacked:
         return 0
 
-    ack_dir.mkdir(parents=True, exist_ok=True)
-    for ack_key, _, _ in unacked:
-        (ack_dir / ack_key.replace("/", "__")).touch()
+    # マーカー書き込みは best-effort。失敗しても注入は続ける (毎回注入されるのは冗長なだけだが、
+    # ここで例外にすると「注入が二度と起きない」= 規約が静かに届かなくなる方に倒れてしまう)。
+    try:
+        ack_dir.mkdir(parents=True, exist_ok=True)
+        for ack_key, _, _ in unacked:
+            (ack_dir / ack_key.replace("/", "__")).touch()
+    except OSError as e:
+        print(f"rules-guard: 注入済みマーカーを書けません ({e})。毎回注入します", file=sys.stderr)
 
     lines = "\n".join(
         f" - {summary}（正: {display}）" if summary else f" - {display} を Read して規約を確認する"
@@ -173,4 +209,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # 想定外の例外でも traceback を撒かず、ツール実行を止めない (このフックは情報提供専用)。
+    try:
+        sys.exit(main())
+    except Exception as e:  # noqa: BLE001 - フックは何があっても編集を妨げない
+        print(f"rules-guard: 規約の注入に失敗しました ({type(e).__name__}: {e})", file=sys.stderr)
+        sys.exit(0)

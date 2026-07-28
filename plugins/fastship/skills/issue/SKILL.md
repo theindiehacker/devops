@@ -359,7 +359,13 @@ Backlog 起票が単なる「思いつき投稿」になってしまう。ヒア
 
 ### 4. GitHub Issue の作成
 
-`mcp__github__issue_write` で作成する。
+`gh` CLI で作成する（本文は改行を保つため一時ファイル経由で渡す）:
+
+```bash
+gh issue create --title "{絵文字} {タイトル}" --label backlog --body-file /tmp/backlog-body.md
+```
+
+GitHub MCP サーバーが使える環境なら `mcp__github__issue_write` でもよいが、`gh` を既定とする（このプラグインの他スキルはすべて `gh` を使っており、MCP サーバーは前提にしていない）。
 
 - **タイトル**: §「タイトル」のルールに従い、先頭に絵文字を付ける (例: `✨ 経費申請の承認状態を一覧表示`)
 - **ラベル**: `backlog` を設定する (`.github/ISSUE_TEMPLATE/backlog.md` の frontmatter と一致)
@@ -371,7 +377,7 @@ Backlog 起票が単なる「思いつき投稿」になってしまう。ヒア
 (Claude が自動判定はせず、エンジニアの判断に委ねる):
 
 - **実装イメージがある** (使用技術 / 成果物が明確) → `/fastship:refine` でタスク分解
-- **実装イメージがない** (RFC 準拠 / 未経験のサービス連携 / ドメイン用語が未定義 等) → `/spike` でプロトタイプ PR を作成してドメイン理解を深める
+- **実装イメージがない** (RFC 準拠 / 未経験のサービス連携 / ドメイン用語が未定義 等) → まず調査・プロトタイプでドメイン理解を深めてから `/fastship:refine` に進む
 
 ## ヒアリング例
 

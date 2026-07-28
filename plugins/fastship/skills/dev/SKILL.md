@@ -42,7 +42,7 @@ git checkout -b "feature/issue-${ISSUE_NUMBER}"
 
 ### 3. 実装
 
-`Skill` ツールから `/feature-dev` を呼び出して実装する。完了条件は CLAUDE.md に従う（`task style:check` / `task dev:test` の通過、フックを `--no-verify` で迂回しない 等）。
+`Skill` ツールから `/feature-dev`（`feature-dev@claude-plugins-official`。**未インストールなら、そのまま自分で実装する** — このスキルの必須依存ではない）を呼び出して実装する。完了条件はリポジトリの CLAUDE.md に従う（lint / テストの通過、フックを `--no-verify` で迂回しない 等。`task style:check` / `task dev:test` は Taskfile があるリポジトリの例）。
 
 > `/feature-dev` は汎用プラグインで DDD 非対応。会社標準の規約（このプラグイン同梱の `rules/**`）とプロジェクトの `.claude/rules/**` は、このプラグインの rules-guard フック（PreToolUse: Read|Edit|Write）が対象パスに触れた初回に要点を注入するが、**実装対象パスにマッチするルールは書き始める前に全文を Read** する。実装をサブエージェント（`Agent` ツール）にファンアウトする場合は rules の自動ロードが保証されないため、該当ルールファイルのパスを prompt に明記して必ず Read させる。Issue 説明欄に `/fastship:design` のドメインモデル設計書（`<!-- domain-model-design -->` マーカー区間）があれば、その集約境界・不変条件・振る舞いに厳密に従う。
 
