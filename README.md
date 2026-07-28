@@ -37,7 +37,6 @@ fastship.jp で運用してきた `.claude/` 資産 (スキル・エージェン
 | プラグイン | 説明 |
 | --- | --- |
 | [fastship](plugins/fastship/) | 全社共通の開発ワークフロー。DDD スキル (`/fastship:issue` → `/fastship:refine` → `/fastship:design` → `/fastship:dev` → `/fastship:push-pr`、`/fastship:conform`)・エージェント (`tdd` / `domain-model-reviewer`)・DDD 規約ハンドブック (`rules/`)・規約自動注入/ガードフック |
-| [hello-world](plugins/hello-world/) | マーケットプレイス導入の動作確認用サンプル (`/hello-world:hello`) |
 
 ## リポジトリ構成
 
@@ -46,6 +45,5 @@ claude-plugins/
 ├── .claude-plugin/
 │   └── marketplace.json   # マーケットプレイスカタログ
 └── plugins/
-    ├── fastship/          # 全社共通の開発ワークフロープラグイン
-    └── hello-world/       # 動作確認用サンプル
+    └── fastship/          # 全社共通の開発ワークフロープラグイン
 ```
