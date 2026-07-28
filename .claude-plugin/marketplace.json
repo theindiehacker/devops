@@ -1,0 +1,18 @@
+{
+  "name": "theindiehacker",
+  "description": "theindiehacker プロジェクト群で使う Claude Code プラグインのマーケットプレイス",
+  "owner": {
+    "name": "gtaiyou24",
+    "email": "gtaiyou24@gmail.com",
+    "url": "https://github.com/theindiehacker"
+  },
+  "plugins": [
+    {
+      "name": "fastship",
+      "source": "./plugins/fastship",
+      "description": "全社共通の開発ワークフロー。fastship.jp の .claude を移植した DDD スキル (issue → refine → design → dev → push-pr / conform)・DDD 規約ハンドブック・規約自動注入/ガードフックを提供する。",
+      "category": "workflow",
+      "keywords": ["ddd", "workflow", "github", "hooks", "rules"]
+    }
+  ]
+}

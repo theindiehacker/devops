@@ -1,0 +1,7 @@
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.28.0
+    hooks:
+      - id: gitleaks
+        # PR 時スキャン（gitleaks.yml）と同じ抑制ポリシー（インライン allow コメント無効）
+        args: ["--ignore-gitleaks-allow"]
