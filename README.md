@@ -51,24 +51,6 @@ git ls-remote https://github.com/theindiehacker/claude-plugins.git
 
 この形式は URL にユーザー名を含められないため、各メンバーの手元で `github.com` の認証情報が一意に解決できる必要があります。複数アカウントを使い分けているメンバーは、代わりに「個人でインストールする」の手順を使ってください。
 
-## トラブルシューティング
-
-### `Failed to clone marketplace repository` が出る
-
-```
-Error: Failed to clone marketplace repository: Cloning into '...'...
-fatal: Cannot prompt because user interactivity has been disabled.
-fatal: unable to get password from user
-```
-
-Claude Code が非対話で clone するのに対し、git が認証情報を特定できずプロンプトを出そうとしたときに発生します。ターミナルで手動の `git clone` が通る場合でも、非対話ではアカウントを確定できずに失敗することがあります。
-
-対処:
-
-1. URL に GitHub ユーザー名を含める形式でやり直す (「個人でインストールする」を参照)
-2. `gh auth status` で、theindiehacker org にアクセスできるアカウントにログインしているか確認する
-3. `git ls-remote https://github.com/theindiehacker/claude-plugins.git` を実行し、認証情報を聞かれる場合は `gh auth setup-git` で credential helper を設定する
-
 ## プラグイン一覧
 
 | プラグイン | 説明 |
