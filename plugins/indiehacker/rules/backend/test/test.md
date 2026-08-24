@@ -81,7 +81,7 @@ class _AppServiceTestBase:
             app_repository=self.app_repository,
             user_pool_repository=self.user_pool_repository,
             oauth_client_repository=self.oauth_client_repository,
-            base_domain="fastship.jp",
+            base_domain="example.com",
         )
 
 class TestAppApplicationService:
@@ -103,7 +103,7 @@ class TestAppApplicationService:
                 app_repository=self.app_repository,
                 user_pool_repository=self.user_pool_repository,
                 oauth_client_repository=self.oauth_client_repository,
-                base_domain="fastship.jp",
+                base_domain="example.com",
             )
 
         def test_Appと専属UserPoolと専属OAuthクライアントを作成できる(self) -> None:

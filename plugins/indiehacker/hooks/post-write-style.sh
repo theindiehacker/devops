@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PostToolUse (Edit|Write) フック: 編集のたびに自動整形 + 静的検査を回す。
 #
-# fastship.jp では settings.json に直書きの `task style:fix` / `task style:check` だったが、
+# 移植元では settings.json に直書きの `task style:fix` / `task style:check` だったが、
 # プラグインとして全社配布するにあたり「task 未導入のリポジトリ / style タスクを持たない
 # リポジトリでは何もしない」防御的ラッパーにしている (毎編集でエラーを撒かないため)。
 # style:check の失敗は exit 2 + stderr で Claude にフィードバックし、その場で直させる。

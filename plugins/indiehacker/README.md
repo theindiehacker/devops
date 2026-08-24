@@ -1,6 +1,6 @@
 # indiehacker
 
-theindiehacker 全社共通の開発ワークフロープラグイン。fastship.jp の `.claude/` で運用してきた DDD ワークフローを、どのリポジトリでも使えるように移植したもの。
+theindiehacker 全社共通の開発ワークフロープラグイン。既存プロダクトの `.claude/` で運用してきた DDD ワークフローを、どのリポジトリでも使えるように移植したもの。
 
 ## 提供するもの
 
@@ -47,11 +47,11 @@ Claude Code はプラグイン内の rules をネイティブに自動ロード�
   - `.github/workflows/claude-code-review.yml` / `claude-fix-on-fail.yml` / `claude.yml` (`/indiehacker:dev` の自動レビューループ)
   - `Taskfile.yml` の `style:fix` / `style:check` / `dev:test` タスク
 
-## fastship.jp 由来で移植しなかったもの
+## 移植しなかったもの
 
 - `hooks/session-start.sh` — Claude Code Web のコンテナセットアップ (uv / bun / Docker) がプロジェクト固有
 - `hooks/pre-write.sh` — OpenAPI 自動生成ファイルの編集禁止パスがプロジェクト固有
-- `skills/run-fastship-jp/` — fastship.jp のローカル起動・スモークテスト専用
+- プロダクト固有のローカル起動・スモークテストスキル — 対象プロダクトの起動手順に密結合
 - `settings.json` の permissions / PostToolUse 直書き — permissions はプラグインで配布できないため各リポジトリの `.claude/settings.json` に残す (PostToolUse の `task style:*` は `post-write-style.sh` として移植済み)
 
 これらは引き続き各リポジトリの `.claude/` に置く。

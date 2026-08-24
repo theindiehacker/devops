@@ -10,7 +10,7 @@
     {
       "name": "indiehacker",
       "source": "./plugins/indiehacker",
-      "description": "全社共通の開発ワークフロー。fastship.jp の .claude を移植した DDD スキル (issue → refine → design → dev → push-pr / conform)・DDD 規約ハンドブック・規約自動注入/ガードフックを提供する。",
+      "description": "全社共通の開発ワークフロー。DDD スキル (issue → refine → design → dev → push-pr / conform)・DDD 規約ハンドブック・規約自動注入/ガードフックを提供する。",
       "category": "workflow",
       "keywords": ["ddd", "workflow", "github", "hooks", "rules"]
     }
