@@ -1,14 +1,14 @@
 ---
 name: refine
-description: Issue をリファインメントし、実装可能な状態にする。使い方: /fastship:refine {GitHub Issue 番号}
+description: Issue をリファインメントし、実装可能な状態にする。使い方: /indiehacker:refine {GitHub Issue 番号}
 ---
 # リファインメント
 起票された GitHub の Issue をもとにドメイン駆動設計(DDD)手法に基づいて設計し、開発できるように Issue を整理してください。
 
 ## 手順
-### 1. ドメインモデルを設計し、人間の承認を得る（`/fastship:design`）
+### 1. ドメインモデルを設計し、人間の承認を得る（`/indiehacker:design`）
 
-まず `Skill` ツールから **`/fastship:design {Issue番号}`** を呼び出す。`/fastship:design` が以下を担う:
+まず `Skill` ツールから **`/indiehacker:design {Issue番号}`** を呼び出す。`/indiehacker:design` が以下を担う:
 
  - ユビキタス言語（用語集）・集約境界・不変条件・値オブジェクト・ドメインイベント・振る舞い（動詞→集約メソッド）を DDD でモデリングする。
  - 既存モデル（例: `authority` / `tenant` / `payment` 等、プロジェクトの既存モジュール）の再利用監査を行い、並行実装を作らない。
@@ -20,10 +20,10 @@ description: Issue をリファインメントし、実装可能な状態にす�
 
 > **注意**: `/plan` はスキルではない。このプラグインに `plan` スキルは無く、これは**組み込みの汎用 `Plan` エージェント**（`Agent` ツールの `subagent_type: "Plan"`、read-only の software architect）を指す。
 
-承認された設計書を前提に、`Agent` ツールで `Plan` エージェントを起動して実装計画を立ててください。プロンプトには **(1) 承認済み設計書（`/fastship:design` が Issue 説明欄に反映したマーカー区間 `<!-- domain-model-design -->` 〜 `<!-- /domain-model-design -->` の本文）/ (2) 現状コードの確認済み事実 / (3) 既存サブ Issue の本文** を渡し、「承認設計に厳密整合した file-by-file の実装計画」を返させる（設計書と矛盾する計画を作らせない）。
+承認された設計書を前提に、`Agent` ツールで `Plan` エージェントを起動して実装計画を立ててください。プロンプトには **(1) 承認済み設計書（`/indiehacker:design` が Issue 説明欄に反映したマーカー区間 `<!-- domain-model-design -->` 〜 `<!-- /domain-model-design -->` の本文）/ (2) 現状コードの確認済み事実 / (3) 既存サブ Issue の本文** を渡し、「承認設計に厳密整合した file-by-file の実装計画」を返させる（設計書と矛盾する計画を作らせない）。
 
- - Plan の実行結果をもとに Issue を更新して、認識齟齬なく実装できるように仕様・設計・具体的な成果物をまとめて Issue に反映してください。**Issue 説明欄を更新する際は、`/fastship:design` が反映した設計書マーカー区間（`<!-- domain-model-design -->` 〜 `<!-- /domain-model-design -->`）を消さずに保持する**。
- - Plan の実行結果は Issue にも記載して、後続の実装モデル（`/fastship:dev`）が読み取って実装できるようにしてください。設計書（Issue 説明欄のマーカー区間）と計画が矛盾しないようにする。
+ - Plan の実行結果をもとに Issue を更新して、認識齟齬なく実装できるように仕様・設計・具体的な成果物をまとめて Issue に反映してください。**Issue 説明欄を更新する際は、`/indiehacker:design` が反映した設計書マーカー区間（`<!-- domain-model-design -->` 〜 `<!-- /domain-model-design -->`）を消さずに保持する**。
+ - Plan の実行結果は Issue にも記載して、後続の実装モデル（`/indiehacker:dev`）が読み取って実装できるようにしてください。設計書（Issue 説明欄のマーカー区間）と計画が矛盾しないようにする。
  - 1つの Issue では AI モデルのコンテキスト上限に達する、もしくは性能悪化を起こす可能性がある場合は、Issue を複数に分割してください。設計書で集約が複数に分かれた場合は、集約境界に沿って分割するのが自然。
 
 ### 3. リファインメント完了

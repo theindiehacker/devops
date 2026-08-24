@@ -1,4 +1,4 @@
-# fastship
+# indiehacker
 
 theindiehacker 全社共通の開発ワークフロープラグイン。fastship.jp の `.claude/` で運用してきた DDD ワークフローを、どのリポジトリでも使えるように移植したもの。
 
@@ -8,19 +8,19 @@ theindiehacker 全社共通の開発ワークフロープラグイン。fastship
 
 | スキル | 役割 |
 |---|---|
-| `/fastship:issue {内容}` | 非エンジニア向け。要望をヒアリングして GitHub Issues に Backlog を起票する |
-| `/fastship:refine {Issue番号}` | Backlog をリファインメント。`/fastship:design` → Plan エージェントで実装可能な Todo にする |
-| `/fastship:design {Issue番号}` | DDD でドメインモデル設計書を作成 → Artifact でレビュー → 承認後に Issue 説明欄へ反映 |
-| `/fastship:dev {Issue番号}` | 実装 → PR 作成 → 自動レビュー待機 → `[must]` 自己修復 → APPROVED まで自走 |
-| `/fastship:push-pr` | PR テンプレートに従った PR 作成・更新・Draft 解除・Diff コメント・レビュー対応 |
-| `/fastship:conform [--fix] [diff範囲]` | 変更 diff を規約に照らして違反を洗い出す (`--fix` で修正まで適用) |
+| `/indiehacker:issue {内容}` | 非エンジニア向け。要望をヒアリングして GitHub Issues に Backlog を起票する |
+| `/indiehacker:refine {Issue番号}` | Backlog をリファインメント。`/indiehacker:design` → Plan エージェントで実装可能な Todo にする |
+| `/indiehacker:design {Issue番号}` | DDD でドメインモデル設計書を作成 → Artifact でレビュー → 承認後に Issue 説明欄へ反映 |
+| `/indiehacker:dev {Issue番号}` | 実装 → PR 作成 → 自動レビュー待機 → `[must]` 自己修復 → APPROVED まで自走 |
+| `/indiehacker:push-pr` | PR テンプレートに従った PR 作成・更新・Draft 解除・Diff コメント・レビュー対応 |
+| `/indiehacker:conform [--fix] [diff範囲]` | 変更 diff を規約に照らして違反を洗い出す (`--fix` で修正まで適用) |
 
 ### エージェント
 
 | エージェント | 役割 |
 |---|---|
-| `fastship:tdd` | Todo Issue の達成基準から受入テストのスケルトンを生成する (TDD の起点) |
-| `fastship:domain-model-reviewer` | 実装差分を DDD の観点で鑑定する PR 前ゲート (貧血ドメイン・集約境界越え Tx 等) |
+| `indiehacker:tdd` | Todo Issue の達成基準から受入テストのスケルトンを生成する (TDD の起点) |
+| `indiehacker:domain-model-reviewer` | 実装差分を DDD の観点で鑑定する PR 前ゲート (貧血ドメイン・集約境界越え Tx 等) |
 
 ### 規約 (rules/)
 
@@ -41,10 +41,10 @@ Claude Code はプラグイン内の rules をネイティブに自動ロード�
 - `gh` CLI (認証済み) — issue / design / dev / push-pr スキルが使用
 - `jq` — pre-bash フックが使用。**無いとフックが Bash をブロックする** (検査できない状態で素通しさせないため)
 - `python3` (3.9 以上) — rules-guard フックと conform スキルが使用
-- 任意: `feature-dev@claude-plugins-official` — `/fastship:dev` の実装ステップで使う。未インストールなら Claude が直接実装するので必須ではない
+- 任意: `feature-dev@claude-plugins-official` — `/indiehacker:dev` の実装ステップで使う。未インストールなら Claude が直接実装するので必須ではない
+- Issue / PR テンプレートは org 共通リポジトリ [theindiehacker/.github](https://github.com/theindiehacker/.github) を正本とする。`/indiehacker:issue` は `.github/ISSUE_TEMPLATE/backlog.md`、`/indiehacker:push-pr` は `.github/PULL_REQUEST_TEMPLATE.md` を `gh api` で取得して使う。各リポジトリに同名のテンプレートがあればそちらが優先される (GitHub の default community health files の仕様どおり)
 - 一部スキルはリポジトリ側の資産を前提とする (無い場合は該当ステップをスキップして動く):
-  - `.github/workflows/claude-code-review.yml` / `claude-fix-on-fail.yml` / `claude.yml` (`/fastship:dev` の自動レビューループ)
-  - `.github/PULL_REQUEST_TEMPLATE.md` / `.github/ISSUE_TEMPLATE/todo.md` (`/fastship:push-pr` / `/fastship:issue`)
+  - `.github/workflows/claude-code-review.yml` / `claude-fix-on-fail.yml` / `claude.yml` (`/indiehacker:dev` の自動レビューループ)
   - `Taskfile.yml` の `style:fix` / `style:check` / `dev:test` タスク
 
 ## fastship.jp 由来で移植しなかったもの

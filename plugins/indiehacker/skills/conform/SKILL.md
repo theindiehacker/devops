@@ -28,7 +28,7 @@ done
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
   PLUGIN_ROOT=$(find "$HOME/.claude/plugins" "${CLAUDE_PROJECT_DIR:-.}/.claude/plugins" \
-    -maxdepth 6 -type d -path '*/fastship/*' -name rules 2>/dev/null | head -1)
+    -maxdepth 6 -type d -path '*/indiehacker/*' -name rules 2>/dev/null | head -1)
   PLUGIN_ROOT="${PLUGIN_ROOT%/rules}"
 fi
 if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
@@ -63,7 +63,7 @@ fi
 
 diff の各ファイルを対応ルールに照らし、違反を集める:
 
-- **(a) 意味論（DDD）**: `backend/src/**/domain/**` または `**/application/**` に変更があれば、`Agent` ツールで `subagent_type: "fastship:domain-model-reviewer"` を呼ぶ。対象 diff・**ステップ 1 で得た DDD 規約の絶対パス（`rules/backend/src/domain/model/*.md` と `application.md`）を prompt に列挙**・（あれば）Issue 番号／設計書を渡し、貧血ドメイン・集約境界越え Tx・primitive obsession・ロジック漏れ・用語ドリフト・境界キー欠落を鑑定させる。**パスを渡さないと、サブエージェントは規約を見つけられず要約だけで鑑定してしまう**（プラグインはプロジェクト外にあり `Glob` で見つからないため）。サブエージェントなのでルール全文はそちらで消費され、メイン会話は findings だけ受け取る。
+- **(a) 意味論（DDD）**: `backend/src/**/domain/**` または `**/application/**` に変更があれば、`Agent` ツールで `subagent_type: "indiehacker:domain-model-reviewer"` を呼ぶ。対象 diff・**ステップ 1 で得た DDD 規約の絶対パス（`rules/backend/src/domain/model/*.md` と `application.md`）を prompt に列挙**・（あれば）Issue 番号／設計書を渡し、貧血ドメイン・集約境界越え Tx・primitive obsession・ロジック漏れ・用語ドリフト・境界キー欠落を鑑定させる。**パスを渡さないと、サブエージェントは規約を見つけられず要約だけで鑑定してしまう**（プラグインはプロジェクト外にあり `Glob` で見つからないため）。サブエージェントなのでルール全文はそちらで消費され、メイン会話は findings だけ受け取る。
 - **(b) 機械チェック**: `task style:check`（ruff / mypy / deptry / import-linter）を走らせ、構造違反・型・未使用依存を拾う（Taskfile に定義がないリポジトリではスキップ）。CI でも走るが、ここで確認して取りこぼしを防ぐ。
 - **(c) ルール個別照合**: (a)(b) が拾わない規約は、ステップ 2 で読んだルール全文と diff を突き合わせて Claude 自身が照合する（例: `test.md` の「定数を使わずハードコード／テストクラス内プライベート・継承基底の禁止」、`application.md` の「メソッド 50 行以内」、`migration.md` の「テーブル追加時は core.py の tables に登録」、`dpo.md` の「生成には集約のみ」）。
 
@@ -82,7 +82,7 @@ diff の各ファイルを対応ルールに照らし、違反を集める:
 - `[imo]`: より良い準拠の提案（採否は判断）
 - `[ask]`: 設計意図の確認
 
-`--fix` が無ければここで終了し、「修正するなら `/fastship:conform --fix` を再実行、または手動修正」と案内する。
+`--fix` が無ければここで終了し、「修正するなら `/indiehacker:conform --fix` を再実行、または手動修正」と案内する。
 
 ### 5. `--fix` 指定時の修正適用
 

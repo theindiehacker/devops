@@ -1,6 +1,6 @@
 {
-  "name": "fastship",
-  "displayName": "FastShip",
+  "name": "indiehacker",
+  "displayName": "IndieHacker",
   "version": "0.1.0",
   "description": "theindiehacker 全社共通の開発ワークフロープラグイン。fastship.jp の .claude を移植した DDD ワークフロースキル (issue → refine → design → dev → push-pr / conform)、DDD 規約ハンドブック (rules)、規約要点を自動注入する rules-guard フック、--no-verify / ローカル terraform apply を禁止するガードフックを提供する。",
   "author": {

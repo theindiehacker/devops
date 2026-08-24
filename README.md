@@ -19,7 +19,7 @@ git ls-remote https://github.com/theindiehacker/claude-plugins.git
 
 ```
 /plugin marketplace add https://<your-github-username>@github.com/theindiehacker/claude-plugins.git
-/plugin install fastship@theindiehacker
+/plugin install indiehacker@theindiehacker
 ```
 
 `<your-github-username>` は theindiehacker org にアクセスできる GitHub アカウント名に置き換えてください。
@@ -44,7 +44,7 @@ git ls-remote https://github.com/theindiehacker/claude-plugins.git
     }
   },
   "enabledPlugins": {
-    "fastship@theindiehacker": true
+    "indiehacker@theindiehacker": true
   }
 }
 ```
@@ -55,7 +55,7 @@ git ls-remote https://github.com/theindiehacker/claude-plugins.git
 
 | プラグイン | 説明 |
 | --- | --- |
-| [fastship](plugins/fastship/) | 全社共通の開発ワークフロー。DDD スキル (`/fastship:issue` → `/fastship:refine` → `/fastship:design` → `/fastship:dev` → `/fastship:push-pr`、`/fastship:conform`)・エージェント (`tdd` / `domain-model-reviewer`)・DDD 規約ハンドブック (`rules/`)・規約自動注入/ガードフック |
+| [indiehacker](plugins/indiehacker/) | 全社共通の開発ワークフロー。DDD スキル (`/indiehacker:issue` → `/indiehacker:refine` → `/indiehacker:design` → `/indiehacker:dev` → `/indiehacker:push-pr`、`/indiehacker:conform`)・エージェント (`tdd` / `domain-model-reviewer`)・DDD 規約ハンドブック (`rules/`)・規約自動注入/ガードフック |
 
 ## リポジトリ構成
 
@@ -64,5 +64,5 @@ claude-plugins/
 ├── .claude-plugin/
 │   └── marketplace.json   # マーケットプレイスカタログ
 └── plugins/
-    └── fastship/          # 全社共通の開発ワークフロープラグイン
+    └── indiehacker/       # 全社共通の開発ワークフロープラグイン
 ```

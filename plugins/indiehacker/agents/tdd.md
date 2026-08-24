@@ -1,6 +1,6 @@
 ---
 name: tdd
-description: Todo Issue の達成基準 + テスト方針 (入力→期待値) を元に、backend/test/acceptance/ のテストスケルトンを生成する。/fastship:dev の最初のステップで「失敗するテストを先に書く」TDD 駆動の起点として使う。実装は行わず、テストコード骨子のみを書き出す。
+description: Todo Issue の達成基準 + テスト方針 (入力→期待値) を元に、backend/test/acceptance/ のテストスケルトンを生成する。/indiehacker:dev の最初のステップで「失敗するテストを先に書く」TDD 駆動の起点として使う。実装は行わず、テストコード骨子のみを書き出す。
 tools: Read, Glob, Grep, Write, Edit, Bash
 model: opus
 ---
@@ -8,7 +8,7 @@ model: opus
 # テスト駆動開発 (tdd)
 
 Todo Issue または Plan に書かれた内容を読み取り、受け入れテストの **テストスケルトン** を生成する。
-実装は行わず、`/fastship:dev` が「失敗するテストを先に書く → 実装で通す」TDD 駆動で進められる起点を作るのが目的。
+実装は行わず、`/indiehacker:dev` が「失敗するテストを先に書く → 実装で通す」TDD 駆動で進められる起点を作るのが目的。
 
 > **着手前に対象リポジトリの構造を確認する。** 以下の記述は fastship.jp（Python / FastAPI の DDD バックエンド）を
 > 前提とした既定値であり、レイアウトが異なるリポジトリでは**既存テストの実際の慣習に合わせる**。
@@ -17,7 +17,7 @@ Todo Issue または Plan に書かれた内容を読み取り、受け入れテ
 
 ## 入力 (呼び出し元から渡される or Issue から抽出する)
 
-呼び出し元 (典型は `/fastship:dev`) から以下を受け取る:
+呼び出し元 (典型は `/indiehacker:dev`) から以下を受け取る:
 
 - 対象 Todo Issue 番号 (例: `#123`) または達成基準のリスト
 - 🧪 テスト方針 (`入力 → 期待値` 形式の分岐リスト)
@@ -38,7 +38,7 @@ Issue 番号が渡された場合は `gh issue view {number} --json title,body` 
 
 `backend/test/acceptance/{module}/test_{日本語のAPI名}.py`
 
-- ファイル名は **テスト規約 (fastship プラグイン同梱 `rules/backend/test/test.md`。プロジェクトの `.claude/rules/` に同じ相対パスがあればそちらを優先) § 命名規約** に従う (受け入れテストは `test_{日本語の説明}.py`)
+- ファイル名は **テスト規約 (indiehacker プラグイン同梱 `rules/backend/test/test.md`。プロジェクトの `.claude/rules/` に同じ相対パスがあればそちらを優先) § 命名規約** に従う (受け入れテストは `test_{日本語の説明}.py`)
   - 規約の絶対パスは、呼び出し元が prompt で渡したもの、または既存テストファイルを `Read` した際に rules-guard フックが「正: <絶対パス>」として注入するものを使う (プラグインはプロジェクト外に install されるため `Glob` では見つからない)
 - 既存ファイルがある場合: 新しい `def test_...` メソッドを追加 (クラスは再利用)
 - 無ければ: ファイル新規作成
@@ -142,7 +142,7 @@ def test_バリデーション失敗で422が返る(
 ### 7. TDD 駆動のため実装は行わない
 
 - テストの中身は `pytest.fail("not implemented")` ではなく、**期待値を書ききる**
-- テストは初回実行で **失敗する** ことが目的 (`/fastship:dev` がそれを実装で通すループに入る)
+- テストは初回実行で **失敗する** ことが目的 (`/indiehacker:dev` がそれを実装で通すループに入る)
 - 検証コードはあえて完全なまま書く (status / json / headers / DB の組み合わせを全部書く)
 
 ### 8. 書かないもの (Out of Scope)
@@ -172,12 +172,12 @@ def test_バリデーション失敗で422が返る(
    - 生成したテストメソッド数 (個別 / parametrize 内の case 数)
    - 既存テストとの違い (新規追加した fixture 等があれば)
 
-## 利用フロー (`/fastship:dev` から呼ばれる場合)
+## 利用フロー (`/indiehacker:dev` から呼ばれる場合)
 
-`/fastship:dev {Issue番号}` の Phase 0 (実装着手前) で:
+`/indiehacker:dev {Issue番号}` の Phase 0 (実装着手前) で:
 
 1. Issue 本文の 🧪 テスト方針 / ✔️ 達成基準 を抽出
-2. `Agent` ツールで `subagent_type: "fastship:tdd"`（このエージェント）を呼び出し
+2. `Agent` ツールで `subagent_type: "indiehacker:tdd"`（このエージェント）を呼び出し
 3. 生成されたテストファイルを、リポジトリのテスト実行方法で実行する (Taskfile があれば `task dev:test -- acceptance/{module}/` 等)
 4. **期待通り失敗することを確認** (Red)
 5. Phase 1 以降で実装し、テストを通す (Green)

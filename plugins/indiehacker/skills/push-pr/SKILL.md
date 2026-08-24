@@ -69,7 +69,7 @@ CI の指摘（`[must]` があると Changes Requested になる）への対応�
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
   PLUGIN_ROOT=$(find "$HOME/.claude/plugins" "${CLAUDE_PROJECT_DIR:-.}/.claude/plugins" \
-    -maxdepth 6 -type d -path '*/fastship/*' -name rules 2>/dev/null | head -1)
+    -maxdepth 6 -type d -path '*/indiehacker/*' -name rules 2>/dev/null | head -1)
   PLUGIN_ROOT="${PLUGIN_ROOT%/rules}"
 fi
 # 解決に失敗したら黙って進まない（$PLUGIN_ROOT が空だと / 直下を指し、以降の Read が全て外れる）
@@ -90,11 +90,25 @@ fi
 
 ## 新規作成フロー
 
-### 3. PR テンプレートの適用
+### 3. PR テンプレートの取得と適用
 
-`.github/PULL_REQUEST_TEMPLATE.md` に従って PR を作成する。**各セクションの埋め方（Todo Issue からのマッピング・🙆‍♂️ やったこと の書き方など）はテンプレートの HTML コメントに集約しているので、それを順守する**（SKILL.md に複製しない）。テンプレートが無いリポジトリでは「💡 概要 / 🙆‍♂️ やったこと / 🙅‍♂️ やらないこと / ✔️ 動作確認」の構成で書く。
+PR テンプレートの正本は **org 共通リポジトリ [theindiehacker/.github](https://github.com/theindiehacker/.github) の `.github/PULL_REQUEST_TEMPLATE.md`**。GitHub の default community health files の仕様どおり、**対象リポジトリに自前のテンプレートがあればそちらが優先**され、無い場合に org 共通テンプレートが適用される。org 共通テンプレートはワーキングツリーに存在しないため、`Read` ではなく以下で取得する:
 
-対応する Todo Issue (`/fastship:refine` で作成、`.github/ISSUE_TEMPLATE/todo.md` 構造) があれば、コメントのマッピングに従って各セクションをそのまま転記する。無い PR (バグ修正・ドキュメントのみ等) は直接埋める。
+```bash
+# ローカル (リポジトリ固有) のテンプレートが最優先。無ければ org 共通テンプレートを取得する。
+TEMPLATE=$(ls .github/PULL_REQUEST_TEMPLATE.md PULL_REQUEST_TEMPLATE.md \
+             docs/PULL_REQUEST_TEMPLATE.md 2>/dev/null | head -1)
+if [ -n "$TEMPLATE" ]; then
+  cat "$TEMPLATE"
+else
+  gh api -H "Accept: application/vnd.github.raw" \
+    repos/theindiehacker/.github/contents/.github/PULL_REQUEST_TEMPLATE.md
+fi
+```
+
+取得したテンプレートに従って PR を作成する。**各セクションの埋め方（Todo Issue からのマッピング・🙆‍♂️ やったこと の書き方など）はテンプレートの HTML コメントに集約しているので、それを順守する**（SKILL.md に複製しない）。取得に失敗した場合 (ネットワーク断・`gh` 未認証など) のみ「💡 概要 / 🙆‍♂️ やったこと / 🙅‍♂️ やらないこと / ✔️ 動作確認」の構成で書く。
+
+対応する Todo Issue (`/indiehacker:refine` で作成、[theindiehacker/.github](https://github.com/theindiehacker/.github) の `.github/ISSUE_TEMPLATE/todo.md` 構造) があれば、コメントのマッピングに従って各セクションをそのまま転記する。無い PR (バグ修正・ドキュメントのみ等) は直接埋める。
 
 ### 4. チェックリスト
 
@@ -112,7 +126,7 @@ PR 作成前に以下を確認:
 
 ### 6. PR 作成
 
-`gh pr create` で PR を作成。本文は @.github/PULL_REQUEST_TEMPLATE.md のテンプレートに従う。
+`gh pr create` で PR を作成。本文はステップ 3 で取得した PR テンプレートに従う。
 
 必須フラグ:
 - `--base "$BASE_BRANCH"` (ステップ 1-a で確定した値。`gh` の既定はリポジトリのデフォルトブランチなので、別ベース運用に備えて明示する)
@@ -137,7 +151,7 @@ PR 作成前に以下を確認:
 gh pr view --json body --jq .body > /tmp/pr_current_body.md
 ```
 
-取得した本文をテンプレート (`.github/PULL_REQUEST_TEMPLATE.md`) と比較し、テンプレートのプレースホルダ (`<!-- ... -->`) 以外に **実質的な追記がないか** を判定する。具体的には以下のいずれかが見つかれば「ユーザ追記あり」と判定:
+取得した本文をステップ 3 の PR テンプレートと比較し、テンプレートのプレースホルダ (`<!-- ... -->`) 以外に **実質的な追記がないか** を判定する。具体的には以下のいずれかが見つかれば「ユーザ追記あり」と判定:
 
 - 「✔️ 動作確認」セクションにスクリーンショット URL、`<details>` ブロック、デプロイ実行リンク (`actions/runs/...`)、Before/After 比較表の画像、計測結果などが入っている
 - 「💡 概要」「🙆‍♂️ やったこと」「🙅‍♂️ やらないこと」のいずれかに、コミットメッセージや diff から導出できない説明（背景・意図・制約など）が記載されている
@@ -162,7 +176,7 @@ EOF
 )"
 ```
 
-- `.github/PULL_REQUEST_TEMPLATE.md` のセクション構造は維持する
+- ステップ 3 の PR テンプレートのセクション構造は維持する
 - 新しいコミットで追加・変更された内容を「やったこと」セクションに反映する
 
 > ⚠️ 万一ユーザ追記を上書きしてしまった場合は、末尾の「## トラブルシューティング: 上書きしてしまった本文の復元」を参照。

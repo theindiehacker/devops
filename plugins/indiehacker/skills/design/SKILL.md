@@ -1,12 +1,12 @@
 ---
 name: design
-description: GitHub Issue を DDD でモデリングし、コードを書く前に「レビュー可能なドメインモデル設計書」（コンテキストマップ・業務フロー図・クラス図・シーケンス図つき）を Claude Code Web の Artifact として発行（mermaid 図もスマホで描画）して人間の承認で止め、承認後に GitHub Issue の説明欄（body）へ反映する。/fastship:refine が実装計画立案の前に呼ぶ。単体でも /fastship:design {Issue番号} で起動可能。
+description: GitHub Issue を DDD でモデリングし、コードを書く前に「レビュー可能なドメインモデル設計書」（コンテキストマップ・業務フロー図・クラス図・シーケンス図つき）を Claude Code Web の Artifact として発行（mermaid 図もスマホで描画）して人間の承認で止め、承認後に GitHub Issue の説明欄（body）へ反映する。/indiehacker:refine が実装計画立案の前に呼ぶ。単体でも /indiehacker:design {Issue番号} で起動可能。
 model: opus
 ---
 
 # ドメインモデル設計 (design)
 
-実装に着手する**前に**、GitHub Issue をドメイン駆動設計(DDD)でモデリングし、**コンテキスト境界（どのクラスがどのコンテキストに属するか）・集約境界・不変条件・値オブジェクト・ドメインイベント・振る舞い**を明示した「ドメインモデル設計書」を作る。**設計書は Claude Code Web の Artifact として発行してレビュー承認を得る**（claude.ai/code の Artifact は mermaid 図もテーブルも描画するので、スマホから GitHub アプリを開かずに図付きで承認判断できる）。そして**人間のレビュー承認で必ず一度止まり、承認後に Issue の説明欄（body）へ反映する**（後続が読める永続化）。ここが `/fastship:refine`（design → 実装計画）→ `/fastship:dev` の中で最も設計品質を左右する工程。コードは 1 行も書かない（設計だけ）。
+実装に着手する**前に**、GitHub Issue をドメイン駆動設計(DDD)でモデリングし、**コンテキスト境界（どのクラスがどのコンテキストに属するか）・集約境界・不変条件・値オブジェクト・ドメインイベント・振る舞い**を明示した「ドメインモデル設計書」を作る。**設計書は Claude Code Web の Artifact として発行してレビュー承認を得る**（claude.ai/code の Artifact は mermaid 図もテーブルも描画するので、スマホから GitHub アプリを開かずに図付きで承認判断できる）。そして**人間のレビュー承認で必ず一度止まり、承認後に Issue の説明欄（body）へ反映する**（後続が読める永続化）。ここが `/indiehacker:refine`（design → 実装計画）→ `/indiehacker:dev` の中で最も設計品質を左右する工程。コードは 1 行も書かない（設計だけ）。
 
 > なぜこのスキルが要るか: DDD ハンドブック（このプラグイン同梱の `rules/backend/src/domain/model/*.md`）は rules-guard フックが「対象ファイルに触れたとき」に要点を注入する方式のため、**まだコードを書いていない設計フェーズでは一度もコンテキストに入らない**。このスキルが明示的に読み込み、モデリング判断に反映させる。
 
@@ -20,7 +20,7 @@ gh issue view "$ISSUE_NUMBER" --json title,body,labels
 ```
 
 - ユーザーストーリー / 達成条件 / 参照ドキュメントを読む。不明点は `AskUserQuestion` で確認（claude.ai/code 経由なら通知が飛ぶ）。
-- Issue が大きすぎて 1 モデルに収まらないと感じたら、この段階で分割方針をメモしておく（最終的に `/fastship:refine` が Issue 分割する）。
+- Issue が大きすぎて 1 モデルに収まらないと感じたら、この段階で分割方針をメモしておく（最終的に `/indiehacker:refine` が Issue 分割する）。
 
 ### 2. DDD ハンドブックを明示的に読み込む（必須・スキップ禁止）
 
@@ -32,7 +32,7 @@ gh issue view "$ISSUE_NUMBER" --json title,body,labels
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
   PLUGIN_ROOT=$(find "$HOME/.claude/plugins" "${CLAUDE_PROJECT_DIR:-.}/.claude/plugins" \
-    -maxdepth 6 -type d -path '*/fastship/*' -name rules 2>/dev/null | head -1)
+    -maxdepth 6 -type d -path '*/indiehacker/*' -name rules 2>/dev/null | head -1)
   PLUGIN_ROOT="${PLUGIN_ROOT%/rules}"
 fi
 # 解決に失敗したら黙って進まない（$PLUGIN_ROOT が空だと / 直下を指し、以降の Read が全て外れる）
@@ -210,11 +210,11 @@ sequenceDiagram
 - 「修正」なら指摘（集約境界・VO・イベントの過不足）を `design.md` に反映し、**同じ file path で Artifact を再発行**（URL 維持）して再度レビュー依頼する（Issue にはまだ反映しない＝中途版で Issue を汚さない）。
 - 「未解決の設計判断」に挙げた点は、ここで人間の判断を仰いで確定する。
 
-> 承認された設計書が、後続の実装計画（Plan エージェント）と `/fastship:dev`（実装）と `domain-model-reviewer`（実装後の鑑定）すべての基準になる。ここで人間が「これは VO にすべき」「集約境界が違う」を言えば、500 行書いた後の手戻りをコード前に潰せる。
+> 承認された設計書が、後続の実装計画（Plan エージェント）と `/indiehacker:dev`（実装）と `domain-model-reviewer`（実装後の鑑定）すべての基準になる。ここで人間が「これは VO にすべき」「集約境界が違う」を言えば、500 行書いた後の手戻りをコード前に潰せる。
 
 ### 6.5. 承認後に Issue 説明欄へ反映する（後続が発見できる永続化）
 
-**「承認」が出たら**、（マーカーで挟んだ）`design.md` を **Issue の説明欄（body）に反映する**。Issue コメントには投稿しない（コメントは他の議論に埋もれて後続が見落とす）。後続の実装計画（Plan エージェント）/ `/fastship:dev` / `domain-model-reviewer` は**説明欄のマーカー区間 `<!-- domain-model-design -->` 〜 `<!-- /domain-model-design -->` を SoT として発見・突き合わせる**ため、承認された設計は必ず説明欄に残す（Artifact は後続セッションからは辿れない）。承認前・修正中は反映しない。
+**「承認」が出たら**、（マーカーで挟んだ）`design.md` を **Issue の説明欄（body）に反映する**。Issue コメントには投稿しない（コメントは他の議論に埋もれて後続が見落とす）。後続の実装計画（Plan エージェント）/ `/indiehacker:dev` / `domain-model-reviewer` は**説明欄のマーカー区間 `<!-- domain-model-design -->` 〜 `<!-- /domain-model-design -->` を SoT として発見・突き合わせる**ため、承認された設計は必ず説明欄に残す（Artifact は後続セッションからは辿れない）。承認前・修正中は反映しない。
 
 **元の Issue 本文（ユーザーストーリー・達成基準など）は消さない**: 説明欄の全置換ではなく、マーカー区間だけを置換する（区間が無い初回は末尾に追記）。再実行時も同じ区間を置換するので、設計書は説明欄に常に 1 つ:
 
@@ -240,8 +240,8 @@ gh issue edit "$ISSUE_NUMBER" --body-file "$BODY_FILE"
 
 ### 7. 承認後の受け渡し
 
-- 承認された設計書はステップ 6.5 で Issue 説明欄（マーカー区間）に反映されているので、呼び出し元（`/fastship:refine`）はそれを前提に**実装計画を立てる**（組み込みの `Plan` エージェント＝`Agent` ツールの `subagent_type: "Plan"` を起動する。`/plan` というスキルは存在しない）。
-- 単体起動（`/fastship:design {Issue番号}` 直接）の場合は、承認済みである旨と「次に `/fastship:refine`（実装計画 → Issue 反映まで）に進める」ことをユーザーに伝えて終了する。
+- 承認された設計書はステップ 6.5 で Issue 説明欄（マーカー区間）に反映されているので、呼び出し元（`/indiehacker:refine`）はそれを前提に**実装計画を立てる**（組み込みの `Plan` エージェント＝`Agent` ツールの `subagent_type: "Plan"` を起動する。`/plan` というスキルは存在しない）。
+- 単体起動（`/indiehacker:design {Issue番号}` 直接）の場合は、承認済みである旨と「次に `/indiehacker:refine`（実装計画 → Issue 反映まで）に進める」ことをユーザーに伝えて終了する。
 
 ## 注意事項
 

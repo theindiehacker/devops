@@ -1,6 +1,6 @@
 ---
 name: issue
-description: ビジネス職・PM・デザイナーなど非エンジニアが、エンジニアに依頼したい機能要望や改善要望を GitHub Issues の Backlog として起票するのを支援する。やりたいことの背景・課題・仕様・参考資料を対話的にヒアリングし、後続の `/fastship:refine` でエンジニアが Todo に分解できる粒度まで具体化する。使い方: /fastship:issue {タスクページのURLや作成したい内容のプロンプト}
+description: ビジネス職・PM・デザイナーなど非エンジニアが、エンジニアに依頼したい機能要望や改善要望を GitHub Issues の Backlog として起票するのを支援する。やりたいことの背景・課題・仕様・参考資料を対話的にヒアリングし、後続の `/indiehacker:refine` でエンジニアが Todo に分解できる粒度まで具体化する。使い方: /indiehacker:issue {タスクページのURLや作成したい内容のプロンプト}
 model: sonnet
 ---
 
@@ -8,20 +8,20 @@ model: sonnet
 
 ユーザーのプロンプトから内容をヒアリングし、**GitHub Issues** に Backlog アイテムを起票する。
 このスキルの主たる利用者は **非エンジニア (ビジネス職 / PM / デザイナー)** であり、
-作成された Backlog は後でエンジニアが `/fastship:refine` で Todo に分解する。
+作成された Backlog は後でエンジニアが `/indiehacker:refine` で Todo に分解する。
 
 **スコープ**: このスキルは **Backlog の起票のみ** を担当する。実装タスクへの分解 (Todo 作成) は
-`/fastship:refine` の責務で、ここでは行わない。実装手順や対象ファイルが明確で Todo として直接起票したく
-なった場合も、まず Backlog として起票してから `/fastship:refine` に流す (背景情報が抜け落ちる事故を防ぐため)。
+`/indiehacker:refine` の責務で、ここでは行わない。実装手順や対象ファイルが明確で Todo として直接起票したく
+なった場合も、まず Backlog として起票してから `/indiehacker:refine` に流す (背景情報が抜け落ちる事故を防ぐため)。
 
 **最重要ゴール**: エンジニアが Backlog を読んだだけで「何を、なぜ、どこまでやるか」が
-分かり、追加質問なしで `/fastship:refine` を始められる状態にすること。
+分かり、追加質問なしで `/indiehacker:refine` を始められる状態にすること。
 
 **鉄則**: 推察・憶測で空欄を埋めない。ユーザーが明示的に答えていない項目は、
 ヒアリングするか、`TBD` として §「不明点の扱い」の手順で残す。
 
 **Why:** Backlog は「ユーザーが言ったこと」の正本。Claude の推測が紛れると、
-ユーザーが自分の発言と勘違いしてレビューを通し `/fastship:refine` の前提が狂う。
+ユーザーが自分の発言と勘違いしてレビューを通し `/indiehacker:refine` の前提が狂う。
 
 ## 手順
 
@@ -58,7 +58,7 @@ model: sonnet
 
 #### B. 仕様・達成条件 (何をどこまでやるのか)
 
-「達成条件」が曖昧だと `/fastship:refine` で詰める手戻りが発生する。
+「達成条件」が曖昧だと `/indiehacker:refine` で詰める手戻りが発生する。
 
 - **ユーザーの操作の流れ**: どの画面から入って、何をして、どうなれば成功か
 - **完了の定義**: チェックリストで「〜できる」「〜が表示される」を列挙
@@ -89,13 +89,26 @@ model: sonnet
 - Stripe Webhook (`payment_intent.succeeded`) ドキュメント: https://docs.stripe.com/api/events/types#event_types-payment_intent.succeeded
 - SendGrid Event Webhook (delivered / bounce / dropped) ドキュメント: https://www.twilio.com/docs/sendgrid/for-developers/tracking-events/event
 
-**Why:** Backlog 起票時点で外部仕様の出典が並んでいると、エンジニアが `/fastship:refine` 着手前に
+**Why:** Backlog 起票時点で外部仕様の出典が並んでいると、エンジニアが `/indiehacker:refine` 着手前に
 「自分で URL を探す」フェーズを飛ばせる。記憶の片隅にあるサービス名 (SendGrid 等) を
 ユーザーが書いていれば、それだけで Claude は十分検索キーを組める。
 
 ### 2. Backlog 本文の組み立て
 
-`.github/ISSUE_TEMPLATE/backlog.md` の構造に従う。
+Backlog テンプレートの正本は **org 共通リポジトリ [theindiehacker/.github](https://github.com/theindiehacker/.github) の `.github/ISSUE_TEMPLATE/backlog.md`**。GitHub の default community health files の仕様どおり、**対象リポジトリに自前のテンプレートがあればそちらが優先**され、無い場合に org 共通テンプレートが適用される。org 共通テンプレートはワーキングツリーに存在しないため、`Read` ではなく以下で取得し、その構造に従う:
+
+```bash
+# ローカル (リポジトリ固有) のテンプレートが最優先。無ければ org 共通テンプレートを取得する。
+TEMPLATE=$(ls .github/ISSUE_TEMPLATE/backlog.md 2>/dev/null | head -1)
+if [ -n "$TEMPLATE" ]; then
+  cat "$TEMPLATE"
+else
+  gh api -H "Accept: application/vnd.github.raw" \
+    repos/theindiehacker/.github/contents/.github/ISSUE_TEMPLATE/backlog.md
+fi
+```
+
+取得に失敗した場合 (ネットワーク断・`gh` 未認証など) のみ、以下の節で定義するセクション構成をそのまま使う。
 
 #### タイトル (必須)
 
@@ -236,7 +249,7 @@ NG 例 (実装手段 / UI 構造が混入):
 は、ユーザーが入力で「スコープ外として」と添えていても **書かない**。
 
 **Why:** 文脈の薄いスコープ外項目を並べると、Backlog を読んだエンジニアが「この
-タスクはデザイン要素も含むのか?」と無用な認識を持ち、`/fastship:refine` の前提が拡張される。
+タスクはデザイン要素も含むのか?」と無用な認識を持ち、`/indiehacker:refine` の前提が拡張される。
 スコープ外は「中心課題の派生で書き手も含めて誰かが拡大解釈しそうな範囲」を抑える
 ためのもので、関係ない話題まで列挙する場ではない。
 
@@ -276,16 +289,16 @@ NG 例 (実装手段 / UI 構造が混入):
 #### 不明点の扱い
 
 **原則: 仕様判断を要する項目は起票時にヒアリングし、達成条件 / スコープ外に反映する**
-(必須)。`🔍 /fastship:refine で確認したいこと` セクションに大量の論点を残すのは **失敗パターン** で、
-ユーザー (非エンジニア) が後で `/fastship:refine` 実行時にエンジニアと再度ヒアリングを行う羽目になり、
+(必須)。`🔍 /indiehacker:refine で確認したいこと` セクションに大量の論点を残すのは **失敗パターン** で、
+ユーザー (非エンジニア) が後で `/indiehacker:refine` 実行時にエンジニアと再度ヒアリングを行う羽目になり、
 Backlog 起票の意義が薄れる。
 
 ヒアリングの徹底:
 - ユーザーストーリーで述べた中心課題に関わる項目 (権限範囲 / 件数上限 / 監査ログ要否 / 表示順 / ページネーション / 表示先画面 等) は、**起票時に `AskUserQuestion` で聞ききる**。
-- 答えがあったものはそのまま **達成条件 / スコープ外** に書き込む。`/fastship:refine で確認したいこと` に逃がさない。
-- ユーザーが「分からない / 任せる」と明示的に答えた項目のみ、`/fastship:refine で確認したいこと` に残す。
+- 答えがあったものはそのまま **達成条件 / スコープ外** に書き込む。`/indiehacker:refine で確認したいこと` に逃がさない。
+- ユーザーが「分からない / 任せる」と明示的に答えた項目のみ、`/indiehacker:refine で確認したいこと` に残す。
 
-`🔍 /fastship:refine で確認したいこと` に書いて良いのは:
+`🔍 /indiehacker:refine で確認したいこと` に書いて良いのは:
 - ユーザーが明示的に「**判断を委ねる / 後で考える**」と答えた項目
 - ユーザーがアクセスできない技術判断 (例: 「DB スキーマ移行が必要か」「キャッシュ層を挟むか」)
 - 文字通り **本人にも判断材料がなく回答不能** だった項目
@@ -295,8 +308,8 @@ Backlog 起票の意義が薄れる。
 - Claude が勝手に思いついた追加検討項目 (「将来こうなるかも」系の想像)
 - 既に達成条件 / スコープ外に書いた内容の再掲
 
-**Why:** Backlog は「起票時点でユーザーが言ったこと」の正本。`/fastship:refine で確認したいこと` が
-肥大化すると、エンジニアが /fastship:refine で「ユーザーが何を望んでいるか」を再構築するコストが高く、
+**Why:** Backlog は「起票時点でユーザーが言ったこと」の正本。`/indiehacker:refine で確認したいこと` が
+肥大化すると、エンジニアが /indiehacker:refine で「ユーザーが何を望んでいるか」を再構築するコストが高く、
 Backlog 起票が単なる「思いつき投稿」になってしまう。ヒアリングを起票時に尽くすことで、
 エンジニアは Backlog だけ読めば仕様判断ができる状態を作る。
 
@@ -325,10 +338,10 @@ Backlog 起票が単なる「思いつき投稿」になってしまう。ヒア
 - 営業 / 管理者以外のロール (CS / 経理 等) へのエクスポート権限付与
 ```
 
-ユーザーが「ファイル名は任せる」と答えた **その項目のみ** `/fastship:refine で確認したいこと` に残す:
+ユーザーが「ファイル名は任せる」と答えた **その項目のみ** `/indiehacker:refine で確認したいこと` に残す:
 
 ```markdown
-### 🔍 /fastship:refine で確認したいこと
+### 🔍 /indiehacker:refine で確認したいこと
 
 - [ ] ファイル名のフォーマット (ユーザーは任せると回答。命名規則の社内標準があるか確認)
 ```
@@ -351,9 +364,9 @@ Backlog 起票が単なる「思いつき投稿」になってしまう。ヒア
 - [ ] スコープ外の項目は **すべて中心課題と文脈が繋がっている** か (文脈の薄い項目を機械的に列挙していないか)
 - [ ] 参考資料を聞いたか (聞いて「ない」と言われた場合は OK)
 - [ ] 外部サービス・SDK が関わる場合、公式ドキュメント URL を「💭 イメージ・参考資料」に貼ったか (`WebSearch` で取得して OK)
-- [ ] `🔍 /fastship:refine で確認したいこと` に書いた項目は **ユーザーが明示的に「任せる」と答えたもの** か、本人にも判断材料がない項目に限られているか (Claude が勝手に思いついた検討項目を残していないか)
-- [ ] エンジニアが追加質問なしで `/fastship:refine` を始められそうか
-- [ ] 本文の各記述がユーザー回答に基づくか。推察で書いた箇所が残っていれば、本文から外して `### 🔍 /fastship:refine で確認したいこと` に移す。
+- [ ] `🔍 /indiehacker:refine で確認したいこと` に書いた項目は **ユーザーが明示的に「任せる」と答えたもの** か、本人にも判断材料がない項目に限られているか (Claude が勝手に思いついた検討項目を残していないか)
+- [ ] エンジニアが追加質問なしで `/indiehacker:refine` を始められそうか
+- [ ] 本文の各記述がユーザー回答に基づくか。推察で書いた箇所が残っていれば、本文から外して `### 🔍 /indiehacker:refine で確認したいこと` に移す。
 
 ユーザーが承認したら次のステップへ。修正要望があれば調整する。
 
@@ -373,16 +386,16 @@ gh issue create --title "{絵文字} {タイトル}" --label backlog --body-file
 GitHub MCP サーバーが使える環境なら `mcp__github__issue_write` でもよいが、`gh` を既定とする（このプラグインの他スキルはすべて `gh` を使っており、MCP サーバーは前提にしていない）。
 
 - **タイトル**: §「タイトル」のルールに従い、先頭に絵文字を付ける (例: `✨ 経費申請の承認状態を一覧表示`)
-- **ラベル**: `backlog` を設定する (`.github/ISSUE_TEMPLATE/backlog.md` の frontmatter と一致)
-- **本文**: `.github/ISSUE_TEMPLATE/backlog.md` の構造に従って Markdown で記述する
+- **ラベル**: `backlog` を設定する (ステップ 2 で取得した Backlog テンプレートの frontmatter と一致)
+- **本文**: ステップ 2 で取得した Backlog テンプレートの構造に従って Markdown で記述する
 
 ### 5. 結果の報告と次のアクション案内
 
 作成した GitHub Issue のリンクをユーザーに報告する。次のステップとして以下を案内する
 (Claude が自動判定はせず、エンジニアの判断に委ねる):
 
-- **実装イメージがある** (使用技術 / 成果物が明確) → `/fastship:refine` でタスク分解
-- **実装イメージがない** (RFC 準拠 / 未経験のサービス連携 / ドメイン用語が未定義 等) → まず調査・プロトタイプでドメイン理解を深めてから `/fastship:refine` に進む
+- **実装イメージがある** (使用技術 / 成果物が明確) → `/indiehacker:refine` でタスク分解
+- **実装イメージがない** (RFC 準拠 / 未経験のサービス連携 / ドメイン用語が未定義 等) → まず調査・プロトタイプでドメイン理解を深めてから `/indiehacker:refine` に進む
 
 ## ヒアリング例
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# /fastship:conform スキルに同梱する、paths スコープ突合ロジック（ライブラリ兼 CLI）。
+# /indiehacker:conform スキルに同梱する、paths スコープ突合ロジック（ライブラリ兼 CLI）。
 # ルールの供給源は 2 つ:
 #   1. プラグイン同梱ルール: <このプラグイン>/rules/**/*.md（会社標準）
 #   2. プロジェクトルール: $CLAUDE_PROJECT_DIR/.claude/rules/**/*.md（リポジトリ固有）

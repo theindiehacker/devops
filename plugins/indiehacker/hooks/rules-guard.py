@@ -21,7 +21,7 @@
 # 注入は「セッション中ルールごとに一度だけ」(inject-once)。マーカーで既注入を記録し、2 回目以降は
 # 無出力で素通しする。
 #
-# フックは自己完結させる (外部モジュール import なし＝ .pyc も撒かない)。/fastship:conform スキルは
+# フックは自己完結させる (外部モジュール import なし＝ .pyc も撒かない)。/indiehacker:conform スキルは
 # 自前の突合スクリプトを skills/conform/scripts に同梱しており、両者は同じルール群を正として独立に読む。
 #
 # 対応 Python は 3.9 以上 (macOS 標準の /usr/bin/python3 が 3.9 系のため)。新しい型構文は

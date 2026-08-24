@@ -1,11 +1,11 @@
 ---
 name: dev
-description: GitHub Issue を引数に受け取り、実装 → PR 作成 → 自動レビュー待機 → CHANGES_REQUESTED の自己修復 → APPROVED まで一気通貫で進めるスキル。Claude Code Web (claude.ai/code) からスマホで起動して放置運用するためのもの。使い方 → /fastship:dev {GitHub Issue 番号}
+description: GitHub Issue を引数に受け取り、実装 → PR 作成 → 自動レビュー待機 → CHANGES_REQUESTED の自己修復 → APPROVED まで一気通貫で進めるスキル。Claude Code Web (claude.ai/code) からスマホで起動して放置運用するためのもの。使い方 → /indiehacker:dev {GitHub Issue 番号}
 ---
 
 # Issue 実装からマージ可能までの自走
 
-claude.ai/code から `/fastship:dev {Issue 番号}` で起動し、実装 → `/fastship:push-pr` → 自動レビューを待機 → `[must]` を自己修復 → APPROVED まで持っていくためのスキル。スマホ運用を前提に、最後の Approve & Merge だけ人間に委ねる。
+claude.ai/code から `/indiehacker:dev {Issue 番号}` で起動し、実装 → `/indiehacker:push-pr` → 自動レビューを待機 → `[must]` を自己修復 → APPROVED まで持っていくためのスキル。スマホ運用を前提に、最後の Approve & Merge だけ人間に委ねる。
 
 ## 依存ワークフロー / 規約
 
@@ -14,7 +14,7 @@ claude.ai/code から `/fastship:dev {Issue 番号}` で起動し、実装 → `
 - `.github/workflows/claude-code-review.yml` — Ready for review の PR を自動レビュー。`[must]` 検出で PR を Draft に戻し、`<!-- claude-auto-fix:review-changes:{sha} -->` マーカー付きの `@claude` 自動修復依頼コメントを投稿する（PR あたり累計 3 回まで）
 - `.github/workflows/claude-fix-on-fail.yml` — CI 失敗時に `<!-- claude-auto-fix:ci-fail:{sha} -->` マーカー付きの `@claude` 自動修復依頼コメントを投稿する（PR あたり累計 3 回まで）
 - `.github/workflows/claude.yml` — `@claude` メンションでエージェントを起動するベースワークフロー。Bot 由来の `@claude` は `<!-- claude-auto-fix:` マーカー入りに限定
-- このプラグインの push-pr スキル（`/fastship:push-pr`） — PR 作成・更新のセルフレビューと Ready 化までを担う
+- このプラグインの push-pr スキル（`/indiehacker:push-pr`） — PR 作成・更新のセルフレビューと Ready 化までを担う
 - プロジェクトの `CLAUDE.md` — 完了条件（テスト・Lint の通過、フックを `--no-verify` で迂回しない）とレビュー指摘プレフィックス規約（`[must]` / `[imo]` / `[nits]` / `[ask]`）
 
 > `.github/workflows/claude-*.yml` はリポジトリ側の資産（会社テンプレートに同梱）。無いリポジトリでは自動レビュー待機（ステップ 5 以降)が成立しないため、その場合はステップ 4（PR 作成）までで完了として報告する。
@@ -29,7 +29,7 @@ gh issue view "$ISSUE_NUMBER" --json title,body,labels
 ```
 
 - ユーザーストーリー / 達成条件を読み、不明点があれば `AskUserQuestion` で確認する（claude.ai/code 経由なら通知が飛ぶ）
-- `backlog` ラベルが付いている場合は **「先に `/fastship:refine` で Todo に分解した方がよくないか」を確認** する。Backlog をそのまま実装すると粒度が大きすぎることが多い
+- `backlog` ラベルが付いている場合は **「先に `/indiehacker:refine` で Todo に分解した方がよくないか」を確認** する。Backlog をそのまま実装すると粒度が大きすぎることが多い
 
 ### 2. 作業ブランチを作成
 
@@ -42,7 +42,7 @@ git checkout -b "feature/issue-${ISSUE_NUMBER}"
 
 ### 2.5. 失敗するテストを先に書く（Red）
 
-Issue に `🧪 テスト方針`（入力 → 期待値）があり、リポジトリに受け入れテストの置き場がある場合、実装前に `Agent` ツールで `subagent_type: "fastship:tdd"` を呼び、テストスケルトンを生成させる。Issue 番号と達成基準・テスト方針を渡す。
+Issue に `🧪 テスト方針`（入力 → 期待値）があり、リポジトリに受け入れテストの置き場がある場合、実装前に `Agent` ツールで `subagent_type: "indiehacker:tdd"` を呼び、テストスケルトンを生成させる。Issue 番号と達成基準・テスト方針を渡す。
 
 - 生成されたテストが**失敗すること**を確認してから実装に入る（通ってしまうなら、テストが要件を検証できていない）。
 - テスト方針が無い Issue（ドキュメント修正・設定変更など）や、受け入れテストの仕組みが無いリポジトリではスキップする。
@@ -51,11 +51,11 @@ Issue に `🧪 テスト方針`（入力 → 期待値）があり、リポジ�
 
 `Skill` ツールから `/feature-dev`（`feature-dev@claude-plugins-official`。**未インストールなら、そのまま自分で実装する** — このスキルの必須依存ではない）を呼び出して実装する。完了条件はリポジトリの CLAUDE.md に従う（lint / テストの通過、フックを `--no-verify` で迂回しない 等。`task style:check` / `task dev:test` は Taskfile があるリポジトリの例）。
 
-> `/feature-dev` は汎用プラグインで DDD 非対応。会社標準の規約（このプラグイン同梱の `rules/**`）とプロジェクトの `.claude/rules/**` は、このプラグインの rules-guard フック（PreToolUse: Read|Edit|Write）が対象パスに触れた初回に要点を注入するが、**実装対象パスにマッチするルールは書き始める前に全文を Read** する。実装をサブエージェント（`Agent` ツール）にファンアウトする場合は rules の自動ロードが保証されないため、該当ルールファイルのパスを prompt に明記して必ず Read させる。Issue 説明欄に `/fastship:design` のドメインモデル設計書（`<!-- domain-model-design -->` マーカー区間）があれば、その集約境界・不変条件・振る舞いに厳密に従う。
+> `/feature-dev` は汎用プラグインで DDD 非対応。会社標準の規約（このプラグイン同梱の `rules/**`）とプロジェクトの `.claude/rules/**` は、このプラグインの rules-guard フック（PreToolUse: Read|Edit|Write）が対象パスに触れた初回に要点を注入するが、**実装対象パスにマッチするルールは書き始める前に全文を Read** する。実装をサブエージェント（`Agent` ツール）にファンアウトする場合は rules の自動ロードが保証されないため、該当ルールファイルのパスを prompt に明記して必ず Read させる。Issue 説明欄に `/indiehacker:design` のドメインモデル設計書（`<!-- domain-model-design -->` マーカー区間）があれば、その集約境界・不変条件・振る舞いに厳密に従う。
 
 ### 3.5. ドメインモデル鑑定ゲート（PR 前）
 
-`backend/src/**/domain/**` または `**/application/**` に変更がある場合、PR を作る**前に** `Agent` ツールで `subagent_type: "fastship:domain-model-reviewer"` を呼び、DDD の意味論的スメル（貧血ドメイン・集約境界越え Tx・primitive obsession・ロジック漏れ・用語ドリフト）を鑑定する。Issue 番号を渡し、設計書と突き合わせさせる。
+`backend/src/**/domain/**` または `**/application/**` に変更がある場合、PR を作る**前に** `Agent` ツールで `subagent_type: "indiehacker:domain-model-reviewer"` を呼び、DDD の意味論的スメル（貧血ドメイン・集約境界越え Tx・primitive obsession・ロジック漏れ・用語ドリフト）を鑑定する。Issue 番号を渡し、設計書と突き合わせさせる。
 
 **このとき DDD 規約の絶対パスを prompt に列挙して渡す。** プラグインはプロジェクト外に install されるためサブエージェントは `Glob` では規約を見つけられず、渡さないと要約だけで鑑定してしまう。パスが手元に無ければ、次で列挙できる:
 
@@ -63,7 +63,7 @@ Issue に `🧪 テスト方針`（入力 → 期待値）があり、リポジ�
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
   PLUGIN_ROOT=$(find "$HOME/.claude/plugins" "${CLAUDE_PROJECT_DIR:-.}/.claude/plugins" \
-    -maxdepth 6 -type d -path '*/fastship/*' -name rules 2>/dev/null | head -1)
+    -maxdepth 6 -type d -path '*/indiehacker/*' -name rules 2>/dev/null | head -1)
   PLUGIN_ROOT="${PLUGIN_ROOT%/rules}"
 fi
 ls "$PLUGIN_ROOT"/rules/backend/src/domain/model/*.md "$PLUGIN_ROOT"/rules/backend/src/application/application.md
@@ -71,14 +71,14 @@ ls "$PLUGIN_ROOT"/rules/backend/src/domain/model/*.md "$PLUGIN_ROOT"/rules/backe
 
 - `PASS`（`[must]` 無し）→ ステップ 4 へ。
 - `CHANGES_REQUESTED`（`[must]` あり）→ **PR を作る前に自分で修正**する。集約メソッドへのロジック引き上げ・VO 化・イベント化など、鑑定士の直し方に従い、`task style:check` / `task dev:test` を通してから再度鑑定 → `PASS` になったらステップ 4 へ。
-- 鑑定→修正→再鑑定は **最大 2 周** まで。2 周目でも同じ `[must]` が残る場合は設計自体に問題がある可能性が高いので、`AskUserQuestion` で「設計書に戻る（/fastship:design やり直し）/ 指摘を見送って PR を出す / 人間に引き継ぐ」を確認する（ステップ 8 と同型のエスカレーション）。
+- 鑑定→修正→再鑑定は **最大 2 周** まで。2 周目でも同じ `[must]` が残る場合は設計自体に問題がある可能性が高いので、`AskUserQuestion` で「設計書に戻る（/indiehacker:design やり直し）/ 指摘を見送って PR を出す / 人間に引き継ぐ」を確認する（ステップ 8 と同型のエスカレーション）。
 - ドメイン層に変更が無い純粋なインフラ/設定変更なら本ステップはスキップ可。
 
 > 目的は「bot/人間レビューや自分の手戻りが起きる前に、DDD 崩れをローカルで潰す」こと。ここを通してから PR を出すことで、ステップ 5–7 のレビューループでの DDD 指摘を減らす。
 
 ### 4. PR 作成（Ready for review まで）
 
-`Skill` ツールから `/fastship:push-pr` を呼び出す。`/fastship:push-pr` がセルフレビュー (`/simplify` → `/security-review`)・テンプレート適用・Draft → Ready 化までを担うので、本スキルからは結果の PR 番号だけ受け取る。
+`Skill` ツールから `/indiehacker:push-pr` を呼び出す。`/indiehacker:push-pr` がセルフレビュー (`/simplify` → `/security-review`)・テンプレート適用・Draft → Ready 化までを担うので、本スキルからは結果の PR 番号だけ受け取る。
 
 ```bash
 PR_NUMBER=$(gh pr view --json number -q .number)
@@ -114,7 +114,7 @@ while [ "$ELAPSED" -lt "$LIMIT" ]; do
   fi
 
   # CI 失敗を先に検知した場合は、claude-fix-on-fail.yml の発火と並走しないよう
-  # /fastship:dev 側でステップ 7 に合流して CI 修正を自分のコミットに取り込む。
+  # /indiehacker:dev 側でステップ 7 に合流して CI 修正を自分のコミットに取り込む。
   # レビューが未到着なら $STATE は空のままでステップ 6 → 7 (CI 修正のみ) に進む。
   if [ "$CI_FAILED" = "true" ]; then
     echo "ci_failed=true (レビュー未完了でも 7 に合流して CI 修正をまとめる)"
@@ -180,7 +180,7 @@ echo "$LATEST" | jq -r .body > /tmp/pr_review_body.md
 ```bash
 git add path/to/changed_file_1 path/to/changed_file_2
 git commit -m "fix: review #${REVIEW_ID} の指摘に対応"
-# upstream はステップ 4 の /fastship:push-pr で初回 push 時に設定済みのため -u は不要。
+# upstream はステップ 4 の /indiehacker:push-pr で初回 push 時に設定済みのため -u は不要。
 # 万一未設定で失敗したら `git push -u origin HEAD` で再試行する。
 git push
 ```
