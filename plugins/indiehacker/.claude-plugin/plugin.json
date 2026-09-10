@@ -9,5 +9,6 @@
     "url": "https://github.com/theindiehacker"
   },
   "repository": "https://github.com/theindiehacker/claude-plugins",
-  "keywords": ["ddd", "workflow", "github", "hooks", "rules"]
+  "keywords": ["ddd", "workflow", "github", "hooks", "rules"],
+  "dependencies": ["security-guidance@claude-plugins-official"]
 }

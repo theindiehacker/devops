@@ -41,6 +41,7 @@ Claude Code はプラグイン内の rules をネイティブに自動ロード�
 - `gh` CLI (認証済み) — issue / design / dev / push-pr スキルが使用
 - `jq` — pre-bash フックが使用。**無いとフックが Bash をブロックする** (検査できない状態で素通しさせないため)
 - `python3` (3.9 以上) — rules-guard フックと conform スキルが使用
+- 依存プラグイン: `security-guidance@claude-plugins-official` — `plugin.json` の `dependencies` で宣言しているため、indiehacker を有効にすると自動で有効になる (公式マーケットプレイスは Claude Code に既定で登録済み)
 - 任意: `feature-dev@claude-plugins-official` — `/indiehacker:dev` の実装ステップで使う。未インストールなら Claude が直接実装するので必須ではない
 - Issue / PR テンプレートは org 共通リポジトリ [theindiehacker/.github](https://github.com/theindiehacker/.github) を正本とする。`/indiehacker:issue` は `.github/ISSUE_TEMPLATE/backlog.md`、`/indiehacker:push-pr` は `.github/PULL_REQUEST_TEMPLATE.md` を `gh api` で取得して使う。各リポジトリに同名のテンプレートがあればそちらが優先される (GitHub の default community health files の仕様どおり)
 - 一部スキルはリポジトリ側の資産を前提とする (無い場合は該当ステップをスキップして動く):
