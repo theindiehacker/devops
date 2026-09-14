@@ -1,0 +1,21 @@
+name: "🧠 [Claude] Code Review"
+
+on:
+  issue_comment:
+    types: [created]
+
+# write は呼び出し先の job に渡す分だけを job 側で与える
+permissions: {}
+
+jobs:
+  code-review:
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    uses: theindiehacker/github-workflows/.github/workflows/claude-code-review.yml@fecdfdc1f50b87387c2ee91c98d2711412dbab47  # main
+    secrets:
+      # どちらか一方だけが組織シークレットに登録されている前提。未登録側は空文字になる
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
