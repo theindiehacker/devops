@@ -110,10 +110,26 @@ HEAD_DATE=$(gh api "repos/{owner}/{repo}/commits/${HEAD_SHA}" --jq .commit.commi
 ME=$(gh api user --jq .login)
 
 # 1) HEAD コミット以降に自分が /code-review を投稿済みなら再投稿しない（連投すると先行 run が concurrency で kill される）。
-#    --paginate はページごとに配列を出すので jq -s で連結する
-REQUESTED_AT=$(gh api "repos/{owner}/{repo}/issues/${PR_NUMBER}/comments?since=${HEAD_DATE}&per_page=100" --paginate \
-  | jq -rs --arg me "$ME" --arg since "$HEAD_DATE" \
-      '[(add // [])[] | select(.user.login == $me and .body == "/code-review" and .created_at >= $since) | .created_at] | last // empty')
+#    `--paginate` は使わないこと。GitHub の Link ヘッダは numeric-ID パス
+#    (repositories/{id}/...) を返すが、claude.ai/code のプロキシはそれを拒否するため
+#    2 ページ目でエラー JSON が混ざり、jq のパースごと壊れる（実測確認済み）。
+#    ページ番号を明示して回す
+fetch_all() {  # $1 = クエリ付きパス (per_page/page は付けない)
+  local page=1 chunk n
+  : > /tmp/gh_page.jsonl
+  while :; do
+    chunk=$(gh api "$1&per_page=100&page=${page}")
+    n=$(printf '%s' "$chunk" | jq 'length')
+    printf '%s' "$chunk" | jq -c '.[]' >> /tmp/gh_page.jsonl
+    [ "$n" -lt 100 ] && break
+    page=$((page + 1))
+  done
+  jq -s '.' /tmp/gh_page.jsonl
+}
+
+REQUESTED_AT=$(fetch_all "repos/{owner}/{repo}/issues/${PR_NUMBER}/comments?since=${HEAD_DATE}" \
+  | jq -r --arg me "$ME" --arg since "$HEAD_DATE" \
+      '[.[] | select(.user.login == $me and .body == "/code-review" and .created_at >= $since) | .created_at] | last // empty')
 if [ -z "$REQUESTED_AT" ]; then
   # gh pr comment は使わない。issue comments の REST に投稿する
   jq -n '{body:"/code-review"}' > /tmp/review_request.json
@@ -212,9 +228,18 @@ fi
 # 未 resolve スレッドの「先頭コメント ID」を集める (指摘本体。返信は含めない)
 jq '[.[] | select(.resolved == false) | .comment_ids[0]]' /tmp/review_threads.json > /tmp/open_thread_ids.json
 
-# 2) インラインコメント本文を引いて突き合わせる (--paginate はページごとに配列を出すので jq -s で連結する)
-gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}/comments?per_page=100" --paginate \
-  | jq -s 'add // []' > /tmp/pr_all_comments.json
+# 2) インラインコメント本文を引いて突き合わせる
+#    `--paginate` は claude.ai/code のプロキシで 2 ページ目が壊れるため使わない（ステップ 5 と同じ理由）
+page=1
+: > /tmp/gh_page.jsonl
+while :; do
+  chunk=$(gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}/comments?per_page=100&page=${page}")
+  n=$(printf '%s' "$chunk" | jq 'length')
+  printf '%s' "$chunk" | jq -c '.[]' >> /tmp/gh_page.jsonl
+  [ "$n" -lt 100 ] && break
+  page=$((page + 1))
+done
+jq -s '.' /tmp/gh_page.jsonl > /tmp/pr_all_comments.json
 
 jq --slurpfile ids /tmp/open_thread_ids.json \
   '[.[] | select(.id as $i | $ids[0] | index($i))]' /tmp/pr_all_comments.json \
