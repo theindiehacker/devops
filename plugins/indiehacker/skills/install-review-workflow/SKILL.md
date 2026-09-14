@@ -24,6 +24,10 @@ model: sonnet
 **必ず 1 回の `Bash` 呼び出しで実行する。** Bash ツールはシェル変数を呼び出し間で保持しないため、
 分割すると `OWNER` / `WORKFLOWS_REPO` / `REF` が失われる。
 
+> **`gh` の `--json` を使わないこと。** `gh repo view --json` / `gh pr view --json` は内部で GraphQL を叩くが、
+> **Claude Code セッションでは GraphQL が 403 でブロックされる**（実測確認済み）。REST (`gh api repos/...`) を使う。
+> REST の `visibility` は小文字 (`private` / `public`)。GraphQL の大文字 (`PRIVATE`) と混同しないこと。
+
 参照先 (`WORKFLOWS_REPO`) は次の順で決める:
 
 1. **引数 `$ARGUMENTS` に `owner/repo` が渡されていればそれを使う**（別 org の共通リポジトリを参照する場合）
@@ -36,28 +40,31 @@ SHA 固定を要求するため、`@main` では **PR がマージできない**
 ```bash
 set -euo pipefail
 
+# gh の --json は GraphQL を使い Claude Code セッションではブロックされるため、REST (gh api) を使う。
+# repos/{owner}/{repo} のプレースホルダは gh が git remote からローカルに解決する (GraphQL 不要)。
 ROOT=$(git rev-parse --show-toplevel) || { echo "NOT_A_GIT_REPO"; exit 0; }
-OWNER=$(gh repo view --json owner -q .owner.login)
-REPO_VIS=$(gh repo view --json visibility -q .visibility)
+SELF=$(gh api 'repos/{owner}/{repo}' --jq '{owner:.owner.login, visibility}')
+OWNER=$(echo "$SELF" | jq -r .owner)
+REPO_VIS=$(echo "$SELF" | jq -r .visibility)
 
 # 引数優先。無ければ導入先と同じ org の github-workflows を既定にする（org 名はハードコードしない）
 ARG=$(printf '%s' "$ARGUMENTS" | tr -d '[:space:]')
 WORKFLOWS_REPO="${ARG:-${OWNER}/github-workflows}"
 
 # 参照先が読めるか確認する。読めない = 存在しないか権限不足
-if ! WF=$(gh repo view "$WORKFLOWS_REPO" --json visibility,defaultBranchRef 2>/dev/null); then
+if ! WF=$(gh api "repos/${WORKFLOWS_REPO}" 2>/dev/null); then
   echo "WORKFLOWS_REPO_UNREACHABLE $WORKFLOWS_REPO"
   exit 0
 fi
 WF_VIS=$(echo "$WF" | jq -r .visibility)
-DEFAULT_BRANCH=$(echo "$WF" | jq -r .defaultBranchRef.name)
+DEFAULT_BRANCH=$(echo "$WF" | jq -r .default_branch)
 
 # private の reusable workflow は「同じ org の private リポジトリ」からしか呼べない
-if [ "$WF_VIS" = "PRIVATE" ]; then
+if [ "$WF_VIS" = "private" ]; then
   if [ "${WORKFLOWS_REPO%%/*}" != "$OWNER" ]; then
     echo "INCOMPATIBLE cross-org: 参照先が private のため別 org からは呼べない"; exit 0
   fi
-  if [ "$REPO_VIS" = "PUBLIC" ]; then
+  if [ "$REPO_VIS" = "public" ]; then
     echo "INCOMPATIBLE public-caller: 参照先が private のため public リポジトリからは呼べない"; exit 0
   fi
 fi

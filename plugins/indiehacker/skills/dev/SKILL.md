@@ -79,7 +79,10 @@ ls "$PLUGIN_ROOT"/rules/backend/src/domain/model/*.md "$PLUGIN_ROOT"/rules/backe
 `Skill` ツールから `/indiehacker:push-pr` を呼び出す。`/indiehacker:push-pr` がセルフレビュー (`/simplify`)・テンプレート適用・Draft → Ready 化までを担うので、本スキルからは結果の PR 番号だけ受け取る。
 
 ```bash
-PR_NUMBER=$(gh pr view --json number -q .number)
+# gh pr view --json は GraphQL のため使わない。REST でブランチから PR 番号を引く
+BRANCH=$(git branch --show-current)
+OWNER=$(gh api 'repos/{owner}/{repo}' --jq .owner.login)
+PR_NUMBER=$(gh api "repos/{owner}/{repo}/pulls?head=${OWNER}:${BRANCH}" --jq '.[0].number')
 ```
 
 > Draft のままでもレビューは起動するが、レビュー結果に対して人間がすぐ反応できるよう Ready for review にしてから次に進む。
@@ -90,7 +93,7 @@ PR_NUMBER=$(gh pr view --json number -q .number)
 同一 SHA に対する二重起動を避けるため、その SHA でまだ起動していない場合だけ投稿する:
 
 ```bash
-HEAD_SHA=$(gh pr view "$PR_NUMBER" --json headRefOid -q .headRefOid)
+HEAD_SHA=$(gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}" --jq .head.sha)
 
 # この SHA に対する run が既にあるか確認してから投稿する
 RUNS=$(gh run list --workflow=claude-review.yml --json headSha,status,conclusion,databaseId --limit 50)
@@ -111,8 +114,8 @@ while [ "$ELAPSED" -lt "$LIMIT" ]; do
   RUNS=$(gh run list --workflow=claude-review.yml --json headSha,status,conclusion --limit 50)
   REVIEW_DONE=$(echo "$RUNS" | jq -r --arg sha "$HEAD_SHA" \
     '[.[] | select(.headSha == $sha and .status == "completed")] | length > 0')
-  CI_FAILED=$(gh pr view "$PR_NUMBER" --json statusCheckRollup \
-    --jq '[.statusCheckRollup[]? | select(.conclusion == "FAILURE")] | length > 0')
+  CI_FAILED=$(gh api "repos/{owner}/{repo}/commits/${HEAD_SHA}/check-runs" \
+    --jq '[.check_runs[]? | select(.conclusion == "failure")] | length > 0')
 
   # レビュー完了、または CI 失敗を検知したらステップ 6 へ
   if [ "$REVIEW_DONE" = "true" ] || [ "$CI_FAILED" = "true" ]; then
@@ -142,28 +145,22 @@ done
 そのため分岐は review state ではなく、**現 HEAD SHA に対する未 resolve の `[must]` 件数**で行う:
 
 ```bash
-OWNER=$(gh repo view --json owner -q .owner.login)
-REPO=$(gh repo view --json name -q .name)
+# gh の --json と gh api graphql は Claude Code セッションでブロックされるため、
+# REST と CCR 専用ルートを使う (実測確認済み)。
 
-# 未 resolve の thread に紐づくコメントだけを対象にする
-gh api graphql -f query="
-{
-  repository(owner: \"${OWNER}\", name: \"${REPO}\") {
-    pullRequest(number: ${PR_NUMBER}) {
-      reviewThreads(first: 100) {
-        nodes {
-          id
-          isResolved
-          comments(first: 1) { nodes { databaseId body } }
-        }
-      }
-    }
-  }
-}" > /tmp/pr_threads.json
+# 1) 未 resolve スレッドの「先頭コメント ID」を集める (指摘本体。返信は含めない)
+gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}/ccr/review_threads" \
+  --jq '[.[] | select(.resolved == false) | .comment_ids[0]]' > /tmp/open_thread_ids.json
 
-MUST_COUNT=$(jq '[.data.repository.pullRequest.reviewThreads.nodes[]
-  | select(.isResolved == false)
-  | .comments.nodes[0] | select(.body | startswith("[must]"))] | length' /tmp/pr_threads.json)
+# 2) インラインコメント本文を引いて突き合わせる
+gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}/comments" --paginate > /tmp/pr_all_comments.json
+
+jq --slurpfile ids /tmp/open_thread_ids.json \
+  '[.[] | select(.id as $i | $ids[0] | index($i))]' /tmp/pr_all_comments.json \
+  > /tmp/pr_inline_comments.json
+
+MUST_COUNT=$(jq '[.[] | select(.body | startswith("[must]"))] | length' /tmp/pr_inline_comments.json)
+echo "MUST_COUNT=$MUST_COUNT"
 ```
 
 - `MUST_COUNT == 0` かつ `CI_FAILED == "false"` → ステップ 9（完了処理）へ
@@ -175,14 +172,8 @@ MUST_COUNT=$(jq '[.data.repository.pullRequest.reviewThreads.nodes[]
 
 #### 7-a. 対象コメントの取得
 
-レビューは PR レビューとして submit されないため、`reviews/{id}/comments` ではなく
-**ステップ 6 で取得した未 resolve thread の先頭コメント**（＝指摘本体。返信は含めない）を対象にする:
-
-```bash
-jq '[.data.repository.pullRequest.reviewThreads.nodes[]
-  | select(.isResolved == false) | .comments.nodes[0]]' /tmp/pr_threads.json \
-  > /tmp/pr_inline_comments.json
-```
+ステップ 6 が `/tmp/pr_inline_comments.json` に**未 resolve スレッドの先頭コメント**（＝指摘本体。返信は含めない）を
+書き出しているので、それをそのまま使う。追加の取得は不要。
 
 #### 7-b. 対応方針の決定
 
@@ -227,34 +218,15 @@ jq -r '.[] | select(.body | startswith("[must]")) | .id' /tmp/pr_inline_comments
 
 #### 7-e. 対応した会話を Resolve conversation する
 
-PR 上で「未対応指摘の数」を一目で把握できるようにするため、返信した thread を GraphQL で resolve する。REST のコメント ID と GraphQL の thread ID のマッピングを取り、対応済み ID だけ resolve:
+PR 上で「未対応指摘の数」を一目で把握できるようにするため、返信した thread を resolve する。
+GraphQL の `resolveReviewThread` は Claude Code セッションでブロックされるため、CCR 専用ルートを使う
+（thread ID ではなく**コメント ID** を渡す。thread マッピングは不要）:
 
 ```bash
-# thread 一覧 (commentId, threadId) を取得（owner/name はカレントリポジトリから解決）
-OWNER=$(gh repo view --json owner -q .owner.login)
-REPO=$(gh repo view --json name -q .name)
-gh api graphql -f query="
-{
-  repository(owner: \"${OWNER}\", name: \"${REPO}\") {
-    pullRequest(number: ${PR_NUMBER}) {
-      reviewThreads(first: 100) {
-        nodes {
-          id
-          isResolved
-          comments(first: 1) { nodes { databaseId } }
-        }
-      }
-    }
-  }
-}" --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | "\(.comments.nodes[0].databaseId) \(.id)"' > /tmp/thread_map.txt
-
 while read -r comment_id; do
-  thread_id=$(awk -v cid="$comment_id" '$1 == cid {print $2}' /tmp/thread_map.txt)
-  [ -z "$thread_id" ] && continue
-  gh api graphql -f query='
-  mutation($threadId: ID!) {
-    resolveReviewThread(input: {threadId: $threadId}) { thread { isResolved } }
-  }' -f threadId="$thread_id" >/dev/null
+  [ -z "$comment_id" ] && continue
+  gh api --method POST \
+    "repos/{owner}/{repo}/pulls/${PR_NUMBER}/ccr/comments/${comment_id}/resolve" > /dev/null
 done < /tmp/responded_comment_ids.txt
 ```
 
