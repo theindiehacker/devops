@@ -14,11 +14,29 @@ model: sonnet
 
 このプロジェクトでは通常 `main` をベースとするが、誤ったベースに PR を出すリスクを下げるため明示的に確定させる:
 
-1. **既存 PR がある場合** はその PR のベースをそのまま使う（運用変更や別ベース運用への切り替えに対する保険）:
+1. **既存 PR がある場合** はその PR のベースをそのまま使う（運用変更や別ベース運用への切り替えに対する保険）。
+
+   > **`gh pr view --json` を使わないこと。** `number` を除く全フィールドが内部で GraphQL を叩くが、
+   > **claude.ai/code のセッションでは GraphQL が 403 でブロックされる**（実測確認済み）。REST (`gh api`) を使う
+   > （REST はローカル CLI でもそのまま動く）。
+   > `repos/{owner}/{repo}` のプレースホルダは gh が git remote からローカル解決する（GraphQL 不要）。
+
+   **必ず 1 回の `Bash` 呼び出しで実行する**（Bash ツールはシェル変数を呼び出し間で保持しない）:
+
    ```bash
-   BASE_BRANCH=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || echo "")
+   BRANCH=$(git branch --show-current)
+   OWNER=$(gh api 'repos/{owner}/{repo}' --jq .owner.login)
+   # PR 未作成なら PR_NUMBER は空文字になる（非ゼロ終了しない）
+   PR_NUMBER=$(gh api "repos/{owner}/{repo}/pulls?head=${OWNER}:${BRANCH}&state=open" --jq '.[0].number // empty')
+
+   BASE_BRANCH=""
+   if [ -n "$PR_NUMBER" ]; then
+     BASE_BRANCH=$(gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}" --jq .base.ref)
+   fi
+   echo "PR_NUMBER=${PR_NUMBER:-<未作成>} BASE_BRANCH=${BASE_BRANCH:-<未確定>} OWNER=$OWNER BRANCH=$BRANCH"
    ```
-   PR 未作成時は `gh pr view` が非ゼロ終了するため、`|| echo ""` で空文字に正規化する（`set -e` 環境でも中断しない）。
+
+   出力した `PR_NUMBER` / `BASE_BRANCH` / `OWNER` は以降のステップでリテラルとして埋めて使う。
 
 2. 取得できなければ `main` を使う:
    ```bash
@@ -38,14 +56,15 @@ model: sonnet
 
 PR 作成・更新は「実装が一通り完了したタイミング」と等価なので、ここで品質ゲートを通す。
 
-**セキュリティレビューは CI に委譲する（ローカルでは実行しない）**: PR に `/security` とコメントすると
-`.github/workflows/claude-security-review.yml`（Fable 5・フレッシュコンテキスト）が `/security-review` を実行する。
+**セキュリティレビューは CI に委譲する（ローカルでは実行しない）**: PR に `/security-review` とコメントすると
+CI（`/indiehacker:install-review-workflow` が導入する caller ワークフロー）が
+claude-opus-5・フレッシュコンテキストで `/security-review` を実行する。
 ローカルで実行しないのは、(1) 長いセッション履歴ごと課金される、(2) 本スキルの実行モデル（frontmatter の
 `model`）でセキュリティ判断を行うことになる、の 2 点を避けるため。
 
-**レビューの要否はこのスキルが判断する**（Fable 5 は高単価なため、全 PR 自動実行ではなく必要な PR に絞る）。
+**レビューの要否はこのスキルが判断する**（レビューは高単価なため、全 PR 自動実行ではなく必要な PR に絞る）。
 `git diff "$BASE_BRANCH"...HEAD` に以下のいずれかが含まれるなら「要」と判定し、ステップ 11 の冒頭で
-`gh pr comment <PR番号> --body "/security"` を投稿する:
+`/security-review` をコメント投稿する（下記「コメント投稿」のイディオムを使う）:
 
 - 認証認可・セッション・トークン・パスワード・暗号・シークレットの取り扱いに触れる変更
 - テナント / User Pool 境界（`app_id` / `pool_id` / `owner_tenant_id` スコープ、RLS）に関わる変更
@@ -55,9 +74,10 @@ PR 作成・更新は「実装が一通り完了したタイミング」と等�
 - `.github/workflows/**` / Terraform / 依存関係（lock ファイル）の変更
 
 明らかに該当しない場合（ドキュメント・UI 文言・スタイル・テストのみ等）は依頼しない。**迷ったら依頼する（安全側）**。
-CI の指摘（`[must]` があると Changes Requested になる）への対応はステップ 11 のレビュー対応ループで行い、
-対応後の再実行も `/security` コメントで依頼する。
-`.github/workflows/claude-security-review.yml` が無いリポジトリでは `/security` コメントは投稿せず、要と判定した旨だけ報告する。
+CI の指摘（該当行へのインラインコメントとして投稿される）への対応はステップ 11 のレビュー対応ループで行い、
+対応後の再実行も `/security-review` コメントで依頼する。
+レビューワークフローが未導入のリポジトリではコメントしても起動しないので、
+その場合は `/indiehacker:install-review-workflow` での導入を案内する。
 
 **ローカルで確認するプロジェクト規約 (バックエンド / テスト変更がある場合):**
 
@@ -65,11 +85,12 @@ CI の指摘（`[must]` があると Changes Requested になる）への対応�
 
 ```bash
 # 規約はこのプラグインに同梱（プロジェクトの .claude/rules/ に同じ相対パスがあればそちらを優先）。
-# ${CLAUDE_PLUGIN_ROOT} は hooks.json 専用で Bash ツールでは展開されないため、導入先を実際に探す。
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
+# 右辺の表記はスキル読み込み時に Claude Code がプラグインの実パスへ置換する（`:-` などの修飾を付けると置換されない）。
+# 置換されなかった場合だけキャッシュを探す。旧バージョンが残っていることがあるので最新版を選ぶ
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
 if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
-  PLUGIN_ROOT=$(find "$HOME/.claude/plugins" "${CLAUDE_PROJECT_DIR:-.}/.claude/plugins" \
-    -maxdepth 6 -type d -path '*/indiehacker/*' -name rules 2>/dev/null | head -1)
+  PLUGIN_ROOT=$(find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache" -mindepth 4 -maxdepth 4 \
+    -type d -path '*/indiehacker/*' -name rules 2>/dev/null | sort -V | tail -1)
   PLUGIN_ROOT="${PLUGIN_ROOT%/rules}"
 fi
 # 解決に失敗したら黙って進まない（$PLUGIN_ROOT が空だと / 直下を指し、以降の Read が全て外れる）
@@ -81,10 +102,10 @@ fi
 
 ### 2. PR の存在確認
 
-`gh pr view --json number -q .number` で現在のブランチに PR が既に存在するか確認する。
+ステップ 1-a で取得済みの `PR_NUMBER` で分岐する（再取得は不要）。
 
-- **PR が存在しない場合** → ステップ 3（新規作成フロー）へ
-- **PR が存在する場合** → ステップ 7（更新フロー、PR 説明欄の更新から開始）へ
+- **`PR_NUMBER` が空（PR 未作成）** → ステップ 3（新規作成フロー）へ
+- **`PR_NUMBER` に値がある** → ステップ 7（更新フロー、PR 説明欄の更新から開始）へ
 
 ---
 
@@ -92,7 +113,7 @@ fi
 
 ### 3. PR テンプレートの取得と適用
 
-PR テンプレートの正本は **org 共通リポジトリ [theindiehacker/.github](https://github.com/theindiehacker/.github) の `.github/PULL_REQUEST_TEMPLATE.md`**。GitHub の default community health files の仕様どおり、**対象リポジトリに自前のテンプレートがあればそちらが優先**され、無い場合に org 共通テンプレートが適用される。org 共通テンプレートはワーキングツリーに存在しないため、`Read` ではなく以下で取得する:
+PR テンプレートの正本は **org 共通リポジトリ `<owner>/.github` の `.github/PULL_REQUEST_TEMPLATE.md`**（`<owner>` は対象リポジトリの owner。org 名はハードコードせず実行時に導出する）。GitHub の default community health files の仕様どおり、**対象リポジトリに自前のテンプレートがあればそちらが優先**され、無い場合に org 共通テンプレートが適用される。org 共通テンプレートはワーキングツリーに存在しないため、`Read` ではなく以下で取得する:
 
 ```bash
 # ローカル (リポジトリ固有) のテンプレートが最優先。無ければ org 共通テンプレートを取得する。
@@ -101,14 +122,15 @@ TEMPLATE=$(ls .github/PULL_REQUEST_TEMPLATE.md PULL_REQUEST_TEMPLATE.md \
 if [ -n "$TEMPLATE" ]; then
   cat "$TEMPLATE"
 else
+  OWNER=$(gh api 'repos/{owner}/{repo}' --jq .owner.login)
   gh api -H "Accept: application/vnd.github.raw" \
-    repos/theindiehacker/.github/contents/.github/PULL_REQUEST_TEMPLATE.md
+    "repos/${OWNER}/.github/contents/.github/PULL_REQUEST_TEMPLATE.md"
 fi
 ```
 
 取得したテンプレートに従って PR を作成する。**各セクションの埋め方（Todo Issue からのマッピング・🙆‍♂️ やったこと の書き方など）はテンプレートの HTML コメントに集約しているので、それを順守する**（SKILL.md に複製しない）。取得に失敗した場合 (ネットワーク断・`gh` 未認証など) のみ「💡 概要 / 🙆‍♂️ やったこと / 🙅‍♂️ やらないこと / ✔️ 動作確認」の構成で書く。
 
-対応する Todo Issue (`/indiehacker:refine` で作成、[theindiehacker/.github](https://github.com/theindiehacker/.github) の `.github/ISSUE_TEMPLATE/todo.md` 構造) があれば、コメントのマッピングに従って各セクションをそのまま転記する。無い PR (バグ修正・ドキュメントのみ等) は直接埋める。
+対応する Todo Issue (`/indiehacker:refine` で作成、org 共通リポジトリ `<owner>/.github` の `.github/ISSUE_TEMPLATE/todo.md` 構造) があれば、コメントのマッピングに従って各セクションをそのまま転記する。無い PR (バグ修正・ドキュメントのみ等) は直接埋める。
 
 ### 4. チェックリスト
 
@@ -126,12 +148,29 @@ PR 作成前に以下を確認:
 
 ### 6. PR 作成
 
-`gh pr create` で PR を作成。本文はステップ 3 で取得した PR テンプレートに従う。
+PR 本文はステップ 3 で取得した PR テンプレートに従い、`/tmp/pr_body.md` に書き出しておく。
 
-必須フラグ:
-- `--base "$BASE_BRANCH"` (ステップ 1-a で確定した値。`gh` の既定はリポジトリのデフォルトブランチなので、別ベース運用に備えて明示する)
-- `--assignee @me` (Assignees にユーザー自身を指定)
-- `--draft` (ステップ 5 で Draft を選んだ場合のみ)
+**`gh pr create` を使わないこと。** gh の生成系サブコマンドは GraphQL mutation を使い、claude.ai/code のセッションでは 403 でブロックされる（同系統の `gh issue create` で実測確認済み）。REST で作成する。
+本文は改行やバッククォートを含むため `-f` ではなく **`jq -n --rawfile` で JSON を組み立てて `--input`** で渡す:
+
+```bash
+# BASE_BRANCH / BRANCH はステップ 1-a の値をリテラルで埋める
+jq -n --arg title "PR タイトル" --arg head "$BRANCH" --arg base "$BASE_BRANCH" \
+      --rawfile body /tmp/pr_body.md --argjson draft false \
+  '{title:$title, head:$head, base:$base, body:$body, draft:$draft}' > /tmp/pr_create.json
+
+PR_NUMBER=$(gh api --method POST "repos/{owner}/{repo}/pulls" --input /tmp/pr_create.json --jq .number)
+
+# Assignees にユーザー自身を指定する (gh pr create --assignee @me の代替)
+ME=$(gh api user --jq .login)
+jq -n --arg me "$ME" '{assignees:[$me]}' > /tmp/pr_assignees.json
+gh api --method POST "repos/{owner}/{repo}/issues/${PR_NUMBER}/assignees" --input /tmp/pr_assignees.json > /dev/null
+
+echo "PR_NUMBER=$PR_NUMBER"
+```
+
+- `base` はステップ 1-a で確定した値を必ず明示する（別ベース運用に備える）
+- Draft で作る場合（ステップ 5 で選んだとき）は `--argjson draft true` にする
 
 作成後、ステップ 10（Diff コメントの投稿）へ進む。新規作成時は削除対象の既存コメントがないため、ステップ 9 はスキップする。
 
@@ -141,14 +180,14 @@ PR 作成前に以下を確認:
 
 ### 7. PR 説明欄の更新
 
-> ⚠️ **CRITICAL: `gh pr edit --body` の全体置換は破壊的操作。** PR 本文はユーザがブラウザから手動編集する前提 (「✔️ 動作確認」のスクショ・`| Before | After |` 表・デプロイリンク等)。これらの追記を消さないこと。
+> ⚠️ **CRITICAL: PR 本文の全体置換は破壊的操作。** PR 本文はユーザがブラウザから手動編集する前提 (「✔️ 動作確認」のスクショ・`| Before | After |` 表・デプロイリンク等)。これらの追記を消さないこと。
 
 #### 7-a. 現在の本文を取得して上書きリスクを検出
 
 最新のコミット履歴と差分を反映する前に、必ず現在の本文を取得し、ユーザの追記がないか確認する:
 
 ```bash
-gh pr view --json body --jq .body > /tmp/pr_current_body.md
+gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}" --jq .body > /tmp/pr_current_body.md
 ```
 
 取得した本文をステップ 3 の PR テンプレートと比較し、テンプレートのプレースホルダ (`<!-- ... -->`) 以外に **実質的な追記がないか** を判定する。具体的には以下のいずれかが見つかれば「ユーザ追記あり」と判定:
@@ -157,23 +196,25 @@ gh pr view --json body --jq .body > /tmp/pr_current_body.md
 - 「💡 概要」「🙆‍♂️ やったこと」「🙅‍♂️ やらないこと」のいずれかに、コミットメッセージや diff から導出できない説明（背景・意図・制約など）が記載されている
 - テンプレートに無いセクションが追加されている
 
-「ユーザ追記あり」と判定した場合は、`AskUserQuestion` で「ユーザの追記を保持したまま◯◯セクションのみ更新してよいか」を確認する。**回答を得るまで `gh pr edit` は実行しない**。
+「ユーザ追記あり」と判定した場合は、`AskUserQuestion` で「ユーザの追記を保持したまま◯◯セクションのみ更新してよいか」を確認する。**回答を得るまで `PATCH .../pulls/${PR_NUMBER}` は実行しない**。
 
 #### 7-b. 安全な部分更新
 
 ユーザ追記を保持する場合、`/tmp/pr_current_body.md` を `Read` ツールで読み込み、`Edit` ツールで対象セクション（通常は「🙆‍♂️ やったこと」「🙅‍♂️ やらないこと」）のみを書き換える。書き換えた内容を以下で反映する:
 
 ```bash
-gh pr edit --body "$(cat /tmp/pr_current_body.md)"
+jq -n --rawfile body /tmp/pr_current_body.md '{body:$body}' > /tmp/pr_body_patch.json
+gh api --method PATCH "repos/{owner}/{repo}/pulls/${PR_NUMBER}" --input /tmp/pr_body_patch.json > /dev/null
 ```
 
 ユーザ追記がない（テンプレートのプレースホルダのままで実質的な追加情報がない）と確認できた場合のみ、以下の方式で全体置換してよい:
 
 ```bash
-gh pr edit --body "$(cat <<'EOF'
+cat > /tmp/pr_current_body.md <<'EOF'
 更新後の PR 本文
 EOF
-)"
+jq -n --rawfile body /tmp/pr_current_body.md '{body:$body}' > /tmp/pr_body_patch.json
+gh api --method PATCH "repos/{owner}/{repo}/pulls/${PR_NUMBER}" --input /tmp/pr_body_patch.json > /dev/null
 ```
 
 - ステップ 3 の PR テンプレートのセクション構造は維持する
@@ -186,7 +227,7 @@ EOF
 PR 説明欄の更新後、Draft かどうかを確認する:
 
 ```bash
-gh pr view --json isDraft -q .isDraft
+gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}" --jq .draft
 ```
 
 - **Draft でない場合** → ステップ 9（既存 Diff コメントの削除）へ
@@ -216,9 +257,16 @@ PR 本文の「✔️ 動作確認」セクション（`### ✔️ 動作確認`
 
 動作確認チェックを通過したら、Draft を解除する:
 
+Draft の解除は REST に無い。claude.ai/code では GraphQL mutation の `gh pr ready` が 403 になるため CCR 専用ルートを使い、
+CCR ルートが存在しない（404）ローカル CLI では `gh pr ready` にフォールバックする（いずれも実測確認済み）:
+
 ```bash
-gh pr ready
+gh api --method POST "repos/{owner}/{repo}/pulls/${PR_NUMBER}/ccr/ready_for_review" > /dev/null 2>&1 \
+  || gh pr ready "$PR_NUMBER"
 ```
+
+> Draft に戻す場合も同じ形で、`POST repos/{owner}/{repo}/pulls/${PR_NUMBER}/ccr/convert_to_draft`
+> → 失敗したら `gh pr ready --undo "$PR_NUMBER"`。
 
 ---
 
@@ -228,8 +276,8 @@ gh pr ready
 既存のレビューコメントを取得し、自分が投稿したコメントを削除する:
 
 ```bash
-PR_NUMBER=$(gh pr view --json number -q .number)
-CURRENT_USER=$(gh api user -q .login)
+# PR_NUMBER はステップ 1-a の値をリテラルで埋める
+CURRENT_USER=$(gh api user --jq .login)
 
 # 自分が投稿した Diff コメントの ID を取得して削除
 gh api repos/{owner}/{repo}/pulls/${PR_NUMBER}/comments \
@@ -264,8 +312,8 @@ PR 作成・更新後、レビュアーが実装意図を理解できるよう�
 `gh api` の `-f "comments[0][path]=..."` 形式は GitHub API が配列として認識しないため、JSON ファイル経由の `--input` を使用すること:
 
 ```bash
-PR_NUMBER=$(gh pr view --json number -q .number)
-COMMIT_ID=$(gh pr view --json headRefOid -q .headRefOid)
+# PR_NUMBER はステップ 1-a の値をリテラルで埋める
+COMMIT_ID=$(gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}" --jq .head.sha)
 
 cat > /tmp/pr_review.json <<EOF
 {
@@ -299,7 +347,20 @@ gh api repos/{owner}/{repo}/pulls/${PR_NUMBER}/reviews \
 
 ### 11. CI 監視とレビューコメントへの対応・返信
 
-PR 作成 / 更新後は、まずステップ 1-c の判断に従い、必要な場合のみ PR に `/security` とコメントしてセキュリティレビューを依頼する。続いて CI を監視し、失敗はフックをスキップせず修正・再 push。CI 通過後は bot / 人のレビュー（本文・インライン・会話）を全件確認し、`[must]`/`[imo]`/`[ask]`/`[nits]` 規約と CLAUDE.md の指摘対応方針で採否を判断。修正は CI 再監視、全件に日本語で返信し、`CHANGES_REQUESTED` は再レビュー依頼（セキュリティレビュー由来の指摘に対応した場合は、PR に `/security` とコメントして再実行を依頼する）。
+PR 作成 / 更新後は、まずステップ 1-c の判断に従い、必要な場合のみ PR に `/security-review` とコメントしてセキュリティレビューを依頼する。続いて CI を監視し、失敗はフックをスキップせず修正・再 push。CI 通過後は bot / 人のレビュー（本文・インライン・会話）を全件確認し、`[must]`/`[imo]`/`[ask]`/`[nits]` 規約と CLAUDE.md の指摘対応方針で採否を判断。修正は CI 再監視、全件に日本語で返信する。修正 push 後の再レビューは、コードレビューなら `/code-review`、セキュリティレビュー由来の指摘なら `/security-review` を PR にコメントして依頼する（いずれもコメント完全一致でのみ起動する）。
+
+## コメント投稿のイディオム
+
+**`gh pr comment` を使わないこと**（同上）。PR へのコメントは
+issue comments の REST エンドポイントに投稿する。本文は `jq -n` で JSON にしてから渡す:
+
+```bash
+jq -n --arg body "/security-review" '{body:$body}' > /tmp/pr_comment.json
+gh api --method POST "repos/{owner}/{repo}/issues/${PR_NUMBER}/comments" --input /tmp/pr_comment.json > /dev/null
+```
+
+レビュー依頼コメント（`/code-review` / `/security-review`）は**完全一致でのみ起動する**ため、
+前後に文字を足さないこと。
 
 ## 注意事項
 

@@ -55,7 +55,28 @@ git ls-remote https://github.com/theindiehacker/claude-plugins.git
 
 | プラグイン | 説明 |
 | --- | --- |
-| [indiehacker](plugins/indiehacker/) | 全社共通の開発ワークフロー。DDD スキル (`/indiehacker:issue` → `/indiehacker:refine` → `/indiehacker:design` → `/indiehacker:dev` → `/indiehacker:push-pr`、`/indiehacker:conform`)・エージェント (`tdd` / `domain-model-reviewer`)・DDD 規約ハンドブック (`rules/`)・規約自動注入/ガードフック |
+| [indiehacker](plugins/indiehacker/) | 全社共通の開発ワークフロー。DDD スキル (`/indiehacker:issue` → `/indiehacker:refine` → `/indiehacker:design` → `/indiehacker:dev` → `/indiehacker:push-pr`、`/indiehacker:conform` / `/indiehacker:install-review-workflow`)・エージェント (`tdd` / `domain-model-reviewer`)・DDD 規約ハンドブック (`rules/`)・規約自動注入/ガードフック |
+
+## 別の組織へ複製する
+
+スキルは **org 名をハードコードしていません**。org リソースの参照先は、すべて対象リポジトリの owner から
+実行時に導出します:
+
+| 参照先 | 導出方法 | 使うスキル |
+| --- | --- | --- |
+| `<owner>/.github` | 対象リポジトリの owner | `/indiehacker:issue`・`/indiehacker:push-pr` (Issue / PR テンプレート) |
+| `<owner>/github-workflows` | 同上。`/indiehacker:install-review-workflow owner/repo` で明示指定も可 | `/indiehacker:install-review-workflow` (レビューワークフロー) |
+
+そのため、複製先で書き換えるのは**このマーケットプレイス自体の識別情報だけ**です:
+
+| ファイル | 書き換える箇所 |
+| --- | --- |
+| `.claude-plugin/marketplace.json` | `name` / `description` / `owner` |
+| `plugins/indiehacker/.claude-plugin/plugin.json` | `author` / `repository` |
+| `README.md` (このファイル) | インストール手順の org 名・リポジトリ URL |
+
+`github-workflows` 側も同様に複製し、複製先の org に `docs/SETUP.md` の設定 (組織シークレット・Claude GitHub App・
+Actions permissions・Access) を適用してください。
 
 ## リポジトリ構成
 

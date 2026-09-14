@@ -1,8 +1,8 @@
 {
   "name": "indiehacker",
   "displayName": "IndieHacker",
-  "version": "0.1.0",
-  "description": "theindiehacker 全社共通の開発ワークフロープラグイン。DDD ワークフロースキル (issue → refine → design → dev → push-pr / conform)、DDD 規約ハンドブック (rules)、規約要点を自動注入する rules-guard フック、--no-verify / ローカル terraform apply を禁止するガードフックを提供する。",
+  "version": "0.2.0",
+  "description": "全社共通の開発ワークフロープラグイン。DDD ワークフロースキル (issue → refine → design → dev → push-pr / conform / install-review-workflow)、DDD 規約ハンドブック (rules)、規約要点を自動注入する rules-guard フック、--no-verify / ローカル terraform apply を禁止するガードフックを提供する。",
   "author": {
     "name": "gtaiyou24",
     "email": "gtaiyou24@gmail.com",
