@@ -55,7 +55,7 @@ git ls-remote https://github.com/theindiehacker/claude-plugins.git
 
 | プラグイン | 説明 |
 | --- | --- |
-| [indiehacker](plugins/indiehacker/) | 全社共通の開発ワークフロー。DDD スキル (`/indiehacker:issue` → `/indiehacker:refine` → `/indiehacker:design` → `/indiehacker:dev` → `/indiehacker:push-pr`、`/indiehacker:conform`)・エージェント (`tdd` / `domain-model-reviewer`)・DDD 規約ハンドブック (`rules/`)・規約自動注入/ガードフック |
+| [indiehacker](plugins/indiehacker/) | 全社共通の開発ワークフロー。DDD スキル (`/indiehacker:issue` → `/indiehacker:refine` → `/indiehacker:design` → `/indiehacker:dev` → `/indiehacker:push-pr`、`/indiehacker:conform` / `/indiehacker:install-review-workflow`)・エージェント (`tdd` / `domain-model-reviewer`)・DDD 規約ハンドブック (`rules/`)・規約自動注入/ガードフック |
 
 ## リポジトリ構成
 

@@ -11,9 +11,10 @@ theindiehacker 全社共通の開発ワークフロープラグイン。既存�
 | `/indiehacker:issue {内容}` | 非エンジニア向け。要望をヒアリングして GitHub Issues に Backlog を起票する |
 | `/indiehacker:refine {Issue番号}` | Backlog をリファインメント。`/indiehacker:design` → Plan エージェントで実装可能な Todo にする |
 | `/indiehacker:design {Issue番号}` | DDD でドメインモデル設計書を作成 → Artifact でレビュー → 承認後に Issue 説明欄へ反映 |
-| `/indiehacker:dev {Issue番号}` | 実装 → PR 作成 → 自動レビュー待機 → `[must]` 自己修復 → APPROVED まで自走 |
+| `/indiehacker:dev {Issue番号}` | 実装 → PR 作成 → `/code-review` でレビュー起動 → `[must]` 自己修復 → 指摘ゼロまで自走 |
 | `/indiehacker:push-pr` | PR テンプレートに従った PR 作成・更新・Draft 解除・Diff コメント・レビュー対応 |
 | `/indiehacker:conform [--fix] [diff範囲]` | 変更 diff を規約に照らして違反を洗い出す (`--fix` で修正まで適用) |
+| `/indiehacker:install-review-workflow` | `github-workflows` の Claude レビュー reusable workflow を呼ぶ caller を `.github/workflows/` に導入・更新する |
 
 ### エージェント
 
@@ -45,7 +46,7 @@ Claude Code はプラグイン内の rules をネイティブに自動ロード�
 - 任意: `feature-dev@claude-plugins-official` — `/indiehacker:dev` の実装ステップで使う。未インストールなら Claude が直接実装するので必須ではない
 - Issue / PR テンプレートは org 共通リポジトリ [theindiehacker/.github](https://github.com/theindiehacker/.github) を正本とする。`/indiehacker:issue` は `.github/ISSUE_TEMPLATE/backlog.md`、`/indiehacker:push-pr` は `.github/PULL_REQUEST_TEMPLATE.md` を `gh api` で取得して使う。各リポジトリに同名のテンプレートがあればそちらが優先される (GitHub の default community health files の仕様どおり)
 - 一部スキルはリポジトリ側の資産を前提とする (無い場合は該当ステップをスキップして動く):
-  - `.github/workflows/claude-code-review.yml` / `claude-fix-on-fail.yml` / `claude.yml` (`/indiehacker:dev` の自動レビューループ)
+  - `.github/workflows/claude-review.yml` (`/indiehacker:dev` / `/indiehacker:push-pr` のレビュー依頼。`/indiehacker:install-review-workflow` で導入できる)
   - `Taskfile.yml` の `style:fix` / `style:check` / `dev:test` タスク
 
 ## 移植しなかったもの

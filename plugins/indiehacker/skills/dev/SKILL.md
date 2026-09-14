@@ -1,23 +1,21 @@
 ---
 name: dev
-description: GitHub Issue を引数に受け取り、実装 → PR 作成 → 自動レビュー待機 → CHANGES_REQUESTED の自己修復 → APPROVED まで一気通貫で進めるスキル。Claude Code Web (claude.ai/code) からスマホで起動して放置運用するためのもの。使い方 → /indiehacker:dev {GitHub Issue 番号}
+description: GitHub Issue を引数に受け取り、実装 → PR 作成 → `/code-review` でレビュー起動 → `[must]` の自己修復 → 指摘ゼロまで一気通貫で進めるスキル。Claude Code Web (claude.ai/code) からスマホで起動して放置運用するためのもの。使い方 → /indiehacker:dev {GitHub Issue 番号}
 ---
 
 # Issue 実装からマージ可能までの自走
 
-claude.ai/code から `/indiehacker:dev {Issue 番号}` で起動し、実装 → `/indiehacker:push-pr` → 自動レビューを待機 → `[must]` を自己修復 → APPROVED まで持っていくためのスキル。スマホ運用を前提に、最後の Approve & Merge だけ人間に委ねる。
+claude.ai/code から `/indiehacker:dev {Issue 番号}` で起動し、実装 → `/indiehacker:push-pr` → `/code-review` でレビューを起動 → `[must]` を自己修復 → 指摘ゼロまで持っていくためのスキル。スマホ運用を前提に、最後の Approve & Merge だけ人間に委ねる。
 
 ## 依存ワークフロー / 規約
 
 このスキルは以下に依存している。挙動が変わった場合はここを更新する:
 
-- `.github/workflows/claude-code-review.yml` — Ready for review の PR を自動レビュー。`[must]` 検出で PR を Draft に戻し、`<!-- claude-auto-fix:review-changes:{sha} -->` マーカー付きの `@claude` 自動修復依頼コメントを投稿する（PR あたり累計 3 回まで）
-- `.github/workflows/claude-fix-on-fail.yml` — CI 失敗時に `<!-- claude-auto-fix:ci-fail:{sha} -->` マーカー付きの `@claude` 自動修復依頼コメントを投稿する（PR あたり累計 3 回まで）
-- `.github/workflows/claude.yml` — `@claude` メンションでエージェントを起動するベースワークフロー。Bot 由来の `@claude` は `<!-- claude-auto-fix:` マーカー入りに限定
+- **PR コメント `/code-review`** — `theindiehacker/github-workflows` の reusable workflow を呼ぶ caller ワークフローを起動し、指摘を**該当行へのインラインコメント**として投稿する。**コメント完全一致でのみ起動**し、PR レビューを APPROVED / CHANGES_REQUESTED として submit することはない（`/code-review fable` で Fable 5.1 を使う）
 - このプラグインの push-pr スキル（`/indiehacker:push-pr`） — PR 作成・更新のセルフレビューと Ready 化までを担う
 - プロジェクトの `CLAUDE.md` — 完了条件（テスト・Lint の通過、フックを `--no-verify` で迂回しない）とレビュー指摘プレフィックス規約（`[must]` / `[imo]` / `[nits]` / `[ask]`）
 
-> `.github/workflows/claude-*.yml` はリポジトリ側の資産（会社テンプレートに同梱）。無いリポジトリでは自動レビュー待機（ステップ 5 以降)が成立しないため、その場合はステップ 4（PR 作成）までで完了として報告する。
+> レビューワークフローが未導入のリポジトリでは `/code-review` は起動しない。その場合は `/indiehacker:install-review-workflow` での導入を案内し、ステップ 4（PR 作成）までで完了として報告する。
 
 ## 手順
 
@@ -78,46 +76,47 @@ ls "$PLUGIN_ROOT"/rules/backend/src/domain/model/*.md "$PLUGIN_ROOT"/rules/backe
 
 ### 4. PR 作成（Ready for review まで）
 
-`Skill` ツールから `/indiehacker:push-pr` を呼び出す。`/indiehacker:push-pr` がセルフレビュー (`/simplify` → `/security-review`)・テンプレート適用・Draft → Ready 化までを担うので、本スキルからは結果の PR 番号だけ受け取る。
+`Skill` ツールから `/indiehacker:push-pr` を呼び出す。`/indiehacker:push-pr` がセルフレビュー (`/simplify`)・テンプレート適用・Draft → Ready 化までを担うので、本スキルからは結果の PR 番号だけ受け取る。
 
 ```bash
 PR_NUMBER=$(gh pr view --json number -q .number)
 ```
 
-> `claude-code-review.yml` は Draft では起動しないため、Ready for review であることを必ず確認する。
+> Draft のままでもレビューは起動するが、レビュー結果に対して人間がすぐ反応できるよう Ready for review にしてから次に進む。
 
-### 5. 自動レビュー完了の待機（指数バックオフ）
+### 5. レビューの起動と完了待機（指数バックオフ）
 
-`gh pr view --json reviews,headRefOid` 一発で「最新 HEAD SHA」と「これまでに届いた全レビュー」をまとめて取得する。間隔は 30 → 60 → 120 → 240 → 300 秒（上限 5 分）で指数バックオフし、累計 30 分でタイムアウトする:
+レビューは **PR に `/code-review` とコメントして起動する**（コメント完全一致。前後に文字を足すと起動しない）。
+同一 SHA に対する二重起動を避けるため、その SHA でまだ起動していない場合だけ投稿する:
+
+```bash
+HEAD_SHA=$(gh pr view "$PR_NUMBER" --json headRefOid -q .headRefOid)
+
+# この SHA に対する run が既にあるか確認してから投稿する
+RUNS=$(gh run list --workflow=claude-review.yml --json headSha,status,conclusion,databaseId --limit 50)
+if [ "$(echo "$RUNS" | jq -r --arg sha "$HEAD_SHA" '[.[] | select(.headSha == $sha)] | length')" -eq 0 ]; then
+  gh pr comment "$PR_NUMBER" --body "/code-review"
+fi
+```
+
+投稿後、**その SHA に対する run の完了**を待つ。間隔は 30 → 60 → 120 → 240 → 300 秒（上限 5 分）で指数バックオフし、累計 30 分でタイムアウトする:
 
 ```bash
 DELAY=30
 ELAPSED=0
 LIMIT=$((30 * 60))
+REVIEW_DONE=false
 CI_FAILED=false
 while [ "$ELAPSED" -lt "$LIMIT" ]; do
-  PAYLOAD=$(gh pr view "$PR_NUMBER" --json reviews,headRefOid,statusCheckRollup)
-  HEAD_SHA=$(echo "$PAYLOAD" | jq -r .headRefOid)
-  # 注: `gh pr view --json reviews` (GraphQL 経由) では bot の login は `claude` (suffix なし)。
-  # 一方 `gh api .../reviews` (REST) では `claude[bot]` (suffix あり) になる。
-  # 本ステップは GraphQL を使っているので "claude" が正しい。REST を使う場合は "claude[bot]" に置き換えること。
-  LATEST=$(echo "$PAYLOAD" | jq -c \
-    '.reviews | map(select(.author.login == "claude")) | sort_by(.submittedAt) | last // empty')
-  STATE=$(echo "$LATEST" | jq -r '.state // ""')
-  REVIEW_SHA=$(echo "$LATEST" | jq -r '.commit.oid // ""')
-  CI_FAILED=$(echo "$PAYLOAD" | jq -r '[.statusCheckRollup[]? | select(.conclusion == "FAILURE")] | length > 0')
+  RUNS=$(gh run list --workflow=claude-review.yml --json headSha,status,conclusion --limit 50)
+  REVIEW_DONE=$(echo "$RUNS" | jq -r --arg sha "$HEAD_SHA" \
+    '[.[] | select(.headSha == $sha and .status == "completed")] | length > 0')
+  CI_FAILED=$(gh pr view "$PR_NUMBER" --json statusCheckRollup \
+    --jq '[.statusCheckRollup[]? | select(.conclusion == "FAILURE")] | length > 0')
 
-  # 現在の HEAD SHA に対するレビューが届いたら確定
-  if [ -n "$STATE" ] && [ "$REVIEW_SHA" = "$HEAD_SHA" ]; then
-    echo "review_state=$STATE"
-    break
-  fi
-
-  # CI 失敗を先に検知した場合は、claude-fix-on-fail.yml の発火と並走しないよう
-  # /indiehacker:dev 側でステップ 7 に合流して CI 修正を自分のコミットに取り込む。
-  # レビューが未到着なら $STATE は空のままでステップ 6 → 7 (CI 修正のみ) に進む。
-  if [ "$CI_FAILED" = "true" ]; then
-    echo "ci_failed=true (レビュー未完了でも 7 に合流して CI 修正をまとめる)"
+  # レビュー完了、または CI 失敗を検知したらステップ 6 へ
+  if [ "$REVIEW_DONE" = "true" ] || [ "$CI_FAILED" = "true" ]; then
+    echo "review_done=$REVIEW_DONE ci_failed=$CI_FAILED"
     break
   fi
 
@@ -127,41 +126,62 @@ while [ "$ELAPSED" -lt "$LIMIT" ]; do
 done
 ```
 
-タイムアウトした場合 (= レビューが届かない or 古い SHA のレビューしか無い) は、以下の優先順位で再レビューを発火する:
+タイムアウトした場合（run が作られない / 完了しない）は、以下の順で切り分ける:
 
-1. **`<!-- claude-auto-fix:re-review:{sha} -->` マーカー入りの `/review` コメントを投稿** して `claude-code-review.yml` を起動。同一 SHA への重複投稿は無駄なので、過去のマーカー入りコメントを確認して未投稿の場合のみ投稿する:
-
-   ```bash
-   ALREADY=$(gh api "repos/{owner}/{repo}/issues/${PR_NUMBER}/comments" --paginate \
-     --jq "[.[] | select(.body | contains(\"<!-- claude-auto-fix:re-review:${HEAD_SHA} -->\"))] | length")
-   if [ "$ALREADY" -eq 0 ]; then
-     gh pr comment "$PR_NUMBER" --body "$(printf '%s\n%s\n' "<!-- claude-auto-fix:re-review:${HEAD_SHA} -->" "/review")"
-   fi
-   ```
-
-   投稿後、ステップ 5 のポーリングを再開する (DELAY と ELAPSED をリセット)。
-2. それでも届かなければ `AskUserQuestion` で「もう少し待つ / 中断 / 人間に引き継ぐ」を確認する。
-
-> 同一ユーザー (人間) の `/review` 連投は concurrency で先行 run を kill するが、**Bot 投稿は別ユーザー扱いなので先行 run を kill しない**。マーカー dedup により無駄な再投稿も防ぐ。
+1. `gh run list --workflow=claude-review.yml --limit 5` で run 自体が作られているか確認する。
+   **0 件なら caller ワークフローが未導入か、まだ main にマージされていない**
+   （`issue_comment` は常にデフォルトブランチ版の定義で実行される）。
+   `/indiehacker:install-review-workflow` での導入を案内して終了する。
+2. run はあるが失敗している場合は `gh run view <id> --log-failed` で原因を読む
+   （org シークレット未登録・Claude GitHub App 未 install などの前提不足が多い）。
+3. それ以外は `AskUserQuestion` で「もう少し待つ / 中断 / 人間に引き継ぐ」を確認する。
 
 ### 6. レビュー結果による分岐
 
-- `STATE == "APPROVED"` かつ `CI_FAILED == "false"` → ステップ 9（完了処理）へ
-- `STATE == "CHANGES_REQUESTED"` → ステップ 7（自己修復）へ。`CI_FAILED == "true"` も並走している場合は 7-c で **同じコミットに CI 修正も含める**
-- `STATE` が空 (レビュー未到着) かつ `CI_FAILED == "true"` → ステップ 7 に CI 修正のみで合流。7-a / 7-b / 7-d / 7-e はスキップ可、7-c で `gh run view --log-failed` から原因を特定して修正コミット、7-f で Ready 化
-- それ以外 (`COMMENTED` 等) → 内容を読み、`[must]` 相当があるなら 7 へ、なければ APPROVED 待ちで 5 に戻る
-
-### 7. CHANGES_REQUESTED の自己修復
-
-#### 7-a. 該当レビューのコメントだけ取得
-
-全 PR コメントを `--paginate` で舐めると重いので、ステップ 5 で確定した最新 review にぶら下がるコメントだけ取得する:
+レビューは **PR レビュー（APPROVED / CHANGES_REQUESTED）としては submit されず、該当行へのインラインコメントとして投稿される**。
+そのため分岐は review state ではなく、**現 HEAD SHA に対する未 resolve の `[must]` 件数**で行う:
 
 ```bash
-REVIEW_ID=$(echo "$LATEST" | jq -r .id)
-gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}/reviews/${REVIEW_ID}/comments" \
+OWNER=$(gh repo view --json owner -q .owner.login)
+REPO=$(gh repo view --json name -q .name)
+
+# 未 resolve の thread に紐づくコメントだけを対象にする
+gh api graphql -f query="
+{
+  repository(owner: \"${OWNER}\", name: \"${REPO}\") {
+    pullRequest(number: ${PR_NUMBER}) {
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          isResolved
+          comments(first: 1) { nodes { databaseId body } }
+        }
+      }
+    }
+  }
+}" > /tmp/pr_threads.json
+
+MUST_COUNT=$(jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+  | select(.isResolved == false)
+  | .comments.nodes[0] | select(.body | startswith("[must]"))] | length' /tmp/pr_threads.json)
+```
+
+- `MUST_COUNT == 0` かつ `CI_FAILED == "false"` → ステップ 9（完了処理）へ
+- `MUST_COUNT > 0` → ステップ 7（自己修復）へ。`CI_FAILED == "true"` も並走している場合は 7-c で **同じコミットに CI 修正も含める**
+- `MUST_COUNT == 0` かつ `CI_FAILED == "true"` → ステップ 7 に CI 修正のみで合流。7-a / 7-b / 7-d / 7-e はスキップ可、7-c で `gh run view --log-failed` から原因を特定して修正コミット
+- `[must]` 以外（`[imo]` / `[nits]` / `[ask]`）しか無い場合も 7 へ。採否を判断し、全件に返信する
+
+### 7. `[must]` 指摘の自己修復
+
+#### 7-a. 対象コメントの取得
+
+レビューは PR レビューとして submit されないため、`reviews/{id}/comments` ではなく
+**ステップ 6 で取得した未 resolve thread の先頭コメント**（＝指摘本体。返信は含めない）を対象にする:
+
+```bash
+jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+  | select(.isResolved == false) | .comments.nodes[0]]' /tmp/pr_threads.json \
   > /tmp/pr_inline_comments.json
-echo "$LATEST" | jq -r .body > /tmp/pr_review_body.md
 ```
 
 #### 7-b. 対応方針の決定
@@ -179,7 +199,7 @@ echo "$LATEST" | jq -r .body > /tmp/pr_review_body.md
 
 ```bash
 git add path/to/changed_file_1 path/to/changed_file_2
-git commit -m "fix: review #${REVIEW_ID} の指摘に対応"
+git commit -m "fix: レビュー指摘に対応"
 # upstream はステップ 4 の /indiehacker:push-pr で初回 push 時に設定済みのため -u は不要。
 # 万一未設定で失敗したら `git push -u origin HEAD` で再試行する。
 git push
@@ -238,33 +258,30 @@ while read -r comment_id; do
 done < /tmp/responded_comment_ids.txt
 ```
 
-> 完了条件: `[must]` インライン全件に返信が付き、対応した thread がすべて resolve されるまで作業完了とみなさない (`claude-code-review.yml` の依頼コメント本文の制約と整合)。
+> 完了条件: `[must]` インライン全件に返信が付き、対応した thread がすべて resolve されるまで作業完了とみなさない。ステップ 6 の `MUST_COUNT` は未 resolve thread を数えるため、**resolve を怠るとループが終わらない**。
 
-#### 7-f. Draft → Ready に戻す
+#### 7-f. 再レビューの起動
 
-`claude-code-review.yml` は CHANGES_REQUESTED で PR を Draft に戻す仕様。修正 push 後は必ず Ready に戻す:
-
-```bash
-gh pr ready "$PR_NUMBER"
-```
+修正を push すると HEAD SHA が変わる。新しい SHA に対してレビューは**自動では走らない**ので、
+ステップ 5 に戻って `HEAD_SHA` を取り直し、`/code-review` を再投稿する。
 
 → ステップ 5 に戻る。
 
 ### 8. ループ上限
 
-ステップ 5–7 のループは **最大 3 周** まで。3 周目でも CHANGES_REQUESTED が継続する場合、または「同一指摘が 2 周連続で残っている」場合は即エスカレーションする:
+ステップ 5–7 のループは **最大 3 周** まで。3 周目でも `[must]` が残る場合、または「同一指摘が 2 周連続で残っている」場合は即エスカレーションする:
 
 1. これまでの周回でどの指摘に対応したか・残った指摘は何かを PR にサマリコメントとして残す
 2. `AskUserQuestion` で「人間に引き継ぐ / 別アプローチで再挑戦 / そのまま強行マージ依頼」を確認
 
 ### 9. 完了処理
 
-APPROVED が出たら以下を実行:
+**現 HEAD SHA でレビュー run が完了し、未 resolve の `[must]` が 0 件** になったら以下を実行:
 
-1. PR にマージ準備完了の通知コメントを投稿（`@claude` を含めない。下記「Bot ループ防止」参照）:
+1. PR にマージ準備完了の通知コメントを投稿:
 
    ```bash
-   gh pr comment "$PR_NUMBER" --body "自動レビューで APPROVED が出ました。マージ可能です。"
+   gh pr comment "$PR_NUMBER" --body "レビューの [must] 指摘はすべて対応済みです。マージ可能です。"
    ```
 
 2. PR 番号と URL を最終出力としてユーザーに返す（claude.ai/code のセッション結果としてスマホに通知される）
@@ -273,7 +290,9 @@ APPROVED が出たら以下を実行:
 
 ## 注意事項
 
-- **`/review` の投稿はマーカー付きで dedup する**: 再レビューは原則「修正 push → Ready 化」の自然なトリガーで起こす。それでも届かない場合のみ、ステップ 5 の手順に従い `<!-- claude-auto-fix:re-review:{sha} -->` マーカー入りで投稿する。マーカー無しの素の `/review` を Bot から連投すると先行 run を kill する可能性があるため避ける
-- **Bot ループ防止**: PR コメント本文に `@claude` を含めない。`claude.yml` は本文に `@claude` を含むコメントで起動するため、自分の投稿で自分自身を再起動させ得る
-- **同一 SHA の再レビューは発生しない**: 修正 push をせずに `gh pr ready` だけしてもレビューは走らない（既に APPROVED/CHANGES_REQUESTED 済みの SHA は `claude-code-review.yml` 側で skip）
-- **`claude-auto-fix:` 系ワークフローとの二重起動**: 本スキル実行中に CI 失敗 (`claude-fix-on-fail.yml`) または CHANGES_REQUESTED (`claude-code-review.yml`) が発生すると、それぞれが別途 `@claude` 自動修復依頼コメントを投稿し、別エージェントが同 PR に修正コミットを重ねる可能性がある。これを避けるため、本スキルでは **ステップ 5 のループ内で `gh pr view --json statusCheckRollup` も確認し、CI 失敗があれば自分のコミットに修正をまとめる**（両 yml は同一 SHA への重複依頼を抑止する仕様だが、新しい SHA を push したタイミングで両者が並走するリスクは残る）。スマホからセッションを切った後は、`claude-auto-fix:` 系の自走に任せる前提
+- **レビューはコメント完全一致でのみ起動する**: `/code-review`・`/code-review fable`・`/security-review` の 3 つだけ。前後に文字を足した `/code-review お願いします` のようなコメントでは起動しない
+- **同一 SHA に `/code-review` を連投しない**: 先行 run が concurrency で kill される。ステップ 5 のとおり、その SHA の run が無い場合だけ投稿する
+- **レビューは自動では走らない**: 修正 push で HEAD SHA が変わっても、`/code-review` を再投稿するまでレビューは起動しない（ステップ 7-f）
+- **resolve を怠るとループが終わらない**: ステップ 6 の `MUST_COUNT` は未 resolve thread を数えるため、対応した thread は 7-e で必ず resolve する
+- **起動できる条件**: PR が open で、コメント投稿者が OWNER / MEMBER / COLLABORATOR かつ Bot でないこと。Bot アカウントから投稿しても起動しない
+- **セキュリティレビューは別コマンド**: 認証認可・決済・`.github/workflows/**` などに触れる変更は `/indiehacker:push-pr` の判断に従い `/security-review` も依頼する

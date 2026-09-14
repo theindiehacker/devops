@@ -38,14 +38,15 @@ model: sonnet
 
 PR 作成・更新は「実装が一通り完了したタイミング」と等価なので、ここで品質ゲートを通す。
 
-**セキュリティレビューは CI に委譲する（ローカルでは実行しない）**: PR に `/security` とコメントすると
-`.github/workflows/claude-security-review.yml`（Fable 5・フレッシュコンテキスト）が `/security-review` を実行する。
+**セキュリティレビューは CI に委譲する（ローカルでは実行しない）**: PR に `/security-review` とコメントすると
+CI（`/indiehacker:install-review-workflow` が導入する caller ワークフロー）が
+claude-opus-5・フレッシュコンテキストで `/security-review` を実行する。
 ローカルで実行しないのは、(1) 長いセッション履歴ごと課金される、(2) 本スキルの実行モデル（frontmatter の
 `model`）でセキュリティ判断を行うことになる、の 2 点を避けるため。
 
-**レビューの要否はこのスキルが判断する**（Fable 5 は高単価なため、全 PR 自動実行ではなく必要な PR に絞る）。
+**レビューの要否はこのスキルが判断する**（レビューは高単価なため、全 PR 自動実行ではなく必要な PR に絞る）。
 `git diff "$BASE_BRANCH"...HEAD` に以下のいずれかが含まれるなら「要」と判定し、ステップ 11 の冒頭で
-`gh pr comment <PR番号> --body "/security"` を投稿する:
+`gh pr comment <PR番号> --body "/security-review"` を投稿する:
 
 - 認証認可・セッション・トークン・パスワード・暗号・シークレットの取り扱いに触れる変更
 - テナント / User Pool 境界（`app_id` / `pool_id` / `owner_tenant_id` スコープ、RLS）に関わる変更
@@ -55,9 +56,10 @@ PR 作成・更新は「実装が一通り完了したタイミング」と等�
 - `.github/workflows/**` / Terraform / 依存関係（lock ファイル）の変更
 
 明らかに該当しない場合（ドキュメント・UI 文言・スタイル・テストのみ等）は依頼しない。**迷ったら依頼する（安全側）**。
-CI の指摘（`[must]` があると Changes Requested になる）への対応はステップ 11 のレビュー対応ループで行い、
-対応後の再実行も `/security` コメントで依頼する。
-`.github/workflows/claude-security-review.yml` が無いリポジトリでは `/security` コメントは投稿せず、要と判定した旨だけ報告する。
+CI の指摘（該当行へのインラインコメントとして投稿される）への対応はステップ 11 のレビュー対応ループで行い、
+対応後の再実行も `/security-review` コメントで依頼する。
+レビューワークフローが未導入のリポジトリではコメントしても起動しないので、
+その場合は `/indiehacker:install-review-workflow` での導入を案内する。
 
 **ローカルで確認するプロジェクト規約 (バックエンド / テスト変更がある場合):**
 
@@ -299,7 +301,7 @@ gh api repos/{owner}/{repo}/pulls/${PR_NUMBER}/reviews \
 
 ### 11. CI 監視とレビューコメントへの対応・返信
 
-PR 作成 / 更新後は、まずステップ 1-c の判断に従い、必要な場合のみ PR に `/security` とコメントしてセキュリティレビューを依頼する。続いて CI を監視し、失敗はフックをスキップせず修正・再 push。CI 通過後は bot / 人のレビュー（本文・インライン・会話）を全件確認し、`[must]`/`[imo]`/`[ask]`/`[nits]` 規約と CLAUDE.md の指摘対応方針で採否を判断。修正は CI 再監視、全件に日本語で返信し、`CHANGES_REQUESTED` は再レビュー依頼（セキュリティレビュー由来の指摘に対応した場合は、PR に `/security` とコメントして再実行を依頼する）。
+PR 作成 / 更新後は、まずステップ 1-c の判断に従い、必要な場合のみ PR に `/security-review` とコメントしてセキュリティレビューを依頼する。続いて CI を監視し、失敗はフックをスキップせず修正・再 push。CI 通過後は bot / 人のレビュー（本文・インライン・会話）を全件確認し、`[must]`/`[imo]`/`[ask]`/`[nits]` 規約と CLAUDE.md の指摘対応方針で採否を判断。修正は CI 再監視、全件に日本語で返信する。修正 push 後の再レビューは、コードレビューなら `/code-review`、セキュリティレビュー由来の指摘なら `/security-review` を PR にコメントして依頼する（いずれもコメント完全一致でのみ起動する）。
 
 ## 注意事項
 
