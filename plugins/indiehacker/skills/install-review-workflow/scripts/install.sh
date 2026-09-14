@@ -2,33 +2,43 @@
 # caller ワークフロー (.github/workflows/claude-review.yml) を生成・更新する。
 #
 # 使い方:
-#   install.sh <40桁の commit SHA> [リポジトリルート]
+#   install.sh <owner/repo> <40桁の commit SHA> [リポジトリルート]
+#
+#   <owner/repo> … reusable workflow を持つリポジトリ (通常は導入先と同じ org の github-workflows)。
+#                  org 名は埋め込まず引数で受け取る。このプラグインは複数の組織へ複製されるため、
+#                  特定の org を前提にしないこと。
 #
 # 標準出力に結果を 1 行だけ出す。SKILL.md 側はこれで分岐する:
-#   created            … 新規作成した
-#   unchanged          … 既存が生成物と完全一致。何も書いていない
-#   updated <旧SHA>    … 本スクリプトの生成物で SHA だけ違ったので更新した
-#   conflict           … 手編集または別物。**何も書いていない**（呼び出し側で要確認）
+#   created                  … 新規作成した
+#   unchanged                … 既存が生成物と完全一致。何も書いていない
+#   updated <旧slug> <旧SHA> … 本スクリプトの生成物で参照先だけ違ったので更新した
+#   conflict                 … 手編集または別物。**何も書いていない**（呼び出し側で要確認）
 #
 # YAML は quoted heredoc で持つ。${{ }} をシェルに展開させないため、クォートを外さないこと。
 set -euo pipefail
 
-REF="${1:-}"
-ROOT="${2:-.}"
+REPO="${1:-}"
+REF="${2:-}"
+ROOT="${3:-.}"
 
+if ! printf '%s' "$REPO" | grep -Eq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$'; then
+  echo "install.sh: 第 1 引数は <owner>/<repo> 形式である必要があります: '${REPO}'" >&2
+  exit 2
+fi
 if ! printf '%s' "$REF" | grep -Eq '^[0-9a-f]{40}$'; then
-  echo "install.sh: 第 1 引数は 40 桁の commit SHA である必要があります: '${REF}'" >&2
+  echo "install.sh: 第 2 引数は 40 桁の commit SHA である必要があります: '${REF}'" >&2
   exit 2
 fi
 
 TARGET="${ROOT}/.github/workflows/claude-review.yml"
 
 render() {
-  # $1 = 埋め込む SHA
-  sed "s/__REF__/$1/g" <<'YAML'
+  # $1 = 参照先リポジトリ (owner/repo), $2 = 埋め込む SHA
+  # slug に / を含むため sed の区切りは | を使う
+  sed -e "s|__WORKFLOWS_REPO__|$1|g" -e "s|__REF__|$2|g" <<'YAML'
 name: "🧠 [Claude] Review"
 
-# theindiehacker/github-workflows の reusable workflow を呼ぶだけの薄い caller。
+# __WORKFLOWS_REPO__ の reusable workflow を呼ぶだけの薄い caller。
 # /indiehacker:install-review-workflow が生成・更新する。手で編集すると再実行時に確認が入る。
 #
 # 実行条件 (PR が open・コメント完全一致・Bot 除外・author_association) は呼び出し先の job `if` が
@@ -52,7 +62,7 @@ jobs:
   code-review:
     # ref は full length commit SHA で固定する (ghalint 008 / zizmor unpinned-uses)。
     # 更新は /indiehacker:install-review-workflow の再実行で行う
-    uses: theindiehacker/github-workflows/.github/workflows/claude-code-review.yml@__REF__  # main
+    uses: __WORKFLOWS_REPO__/.github/workflows/claude-code-review.yml@__REF__  # main
     # 呼び出し先 job の permissions は caller job の permissions を超えられないため、同じ集合を与える
     permissions:
       contents: read
@@ -67,7 +77,7 @@ jobs:
 
   # PR に `/security-review` とコメントすると起動する
   security-review:
-    uses: theindiehacker/github-workflows/.github/workflows/claude-security-review.yml@__REF__  # main
+    uses: __WORKFLOWS_REPO__/.github/workflows/claude-security-review.yml@__REF__  # main
     permissions:
       contents: read
       pull-requests: write
@@ -81,7 +91,7 @@ YAML
 
 write() {
   mkdir -p "$(dirname "$TARGET")"
-  render "$REF" > "$TARGET"
+  render "$REPO" "$REF" > "$TARGET"
 }
 
 if [ ! -f "$TARGET" ]; then
@@ -90,18 +100,22 @@ if [ ! -f "$TARGET" ]; then
   exit 0
 fi
 
-if render "$REF" | cmp -s - "$TARGET"; then
+if render "$REPO" "$REF" | cmp -s - "$TARGET"; then
   echo "unchanged"
   exit 0
 fi
 
-# 既存が「本スクリプトの生成物で SHA だけ違う」かを判定する。
+# 既存が「本スクリプトの生成物で参照先 (slug / SHA) だけ違う」かを判定する。
 # 判定できない (手編集・旧世代) 場合は書かずに conflict を返す。
-OLD_REF=$(grep -oE 'claude-code-review\.yml@[0-9a-f]{40}' "$TARGET" | head -1 | cut -d@ -f2 || true)
-if [ -n "$OLD_REF" ] && render "$OLD_REF" | cmp -s - "$TARGET"; then
-  write
-  echo "updated ${OLD_REF}"
-  exit 0
+OLD=$(sed -nE 's|^ *uses: ([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/\.github/workflows/claude-code-review\.yml@([0-9a-f]{40}).*|\1 \2|p' "$TARGET" | head -1)
+if [ -n "$OLD" ]; then
+  # shellcheck disable=SC2086
+  set -- $OLD
+  if render "$1" "$2" | cmp -s - "$TARGET"; then
+    write
+    echo "updated $1 $2"
+    exit 0
+  fi
 fi
 
 echo "conflict"

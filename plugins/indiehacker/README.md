@@ -1,6 +1,8 @@
 # indiehacker
 
-theindiehacker 全社共通の開発ワークフロープラグイン。既存プロダクトの `.claude/` で運用してきた DDD ワークフローを、どのリポジトリでも使えるように移植したもの。
+全社共通の開発ワークフロープラグイン。既存プロダクトの `.claude/` で運用してきた DDD ワークフローを、どのリポジトリでも使えるように移植したもの。
+
+**org 非依存**: スキルが参照する org リソース (共通テンプレートの `<owner>/.github`、レビューワークフローの `<owner>/github-workflows`) は、すべて対象リポジトリの owner から実行時に導出する。別の組織へ複製してもそのまま動く。
 
 ## 提供するもの
 
@@ -14,7 +16,7 @@ theindiehacker 全社共通の開発ワークフロープラグイン。既存�
 | `/indiehacker:dev {Issue番号}` | 実装 → PR 作成 → `/code-review` でレビュー起動 → `[must]` 自己修復 → 指摘ゼロまで自走 |
 | `/indiehacker:push-pr` | PR テンプレートに従った PR 作成・更新・Draft 解除・Diff コメント・レビュー対応 |
 | `/indiehacker:conform [--fix] [diff範囲]` | 変更 diff を規約に照らして違反を洗い出す (`--fix` で修正まで適用) |
-| `/indiehacker:install-review-workflow` | `github-workflows` の Claude レビュー reusable workflow を呼ぶ caller を `.github/workflows/` に導入・更新する |
+| `/indiehacker:install-review-workflow [owner/repo]` | `github-workflows` の Claude レビュー reusable workflow を呼ぶ caller を `.github/workflows/` に導入・更新する (参照先は既定で同じ org の `github-workflows`) |
 
 ### エージェント
 
@@ -44,7 +46,7 @@ Claude Code はプラグイン内の rules をネイティブに自動ロード�
 - `python3` (3.9 以上) — rules-guard フックと conform スキルが使用
 - 依存プラグイン: `security-guidance@claude-plugins-official` — `plugin.json` の `dependencies` で宣言しているため、indiehacker を有効にすると自動で有効になる (公式マーケットプレイスは Claude Code に既定で登録済み)
 - 任意: `feature-dev@claude-plugins-official` — `/indiehacker:dev` の実装ステップで使う。未インストールなら Claude が直接実装するので必須ではない
-- Issue / PR テンプレートは org 共通リポジトリ [theindiehacker/.github](https://github.com/theindiehacker/.github) を正本とする。`/indiehacker:issue` は `.github/ISSUE_TEMPLATE/backlog.md`、`/indiehacker:push-pr` は `.github/PULL_REQUEST_TEMPLATE.md` を `gh api` で取得して使う。各リポジトリに同名のテンプレートがあればそちらが優先される (GitHub の default community health files の仕様どおり)
+- Issue / PR テンプレートは org 共通リポジトリ `<owner>/.github` を正本とする (`<owner>` は対象リポジトリの owner から実行時に導出。org 名はハードコードしない)。`/indiehacker:issue` は `.github/ISSUE_TEMPLATE/backlog.md`、`/indiehacker:push-pr` は `.github/PULL_REQUEST_TEMPLATE.md` を `gh api` で取得して使う。各リポジトリに同名のテンプレートがあればそちらが優先される (GitHub の default community health files の仕様どおり)
 - 一部スキルはリポジトリ側の資産を前提とする (無い場合は該当ステップをスキップして動く):
   - `.github/workflows/claude-review.yml` (`/indiehacker:dev` / `/indiehacker:push-pr` のレビュー依頼。`/indiehacker:install-review-workflow` で導入できる)
   - `Taskfile.yml` の `style:fix` / `style:check` / `dev:test` タスク

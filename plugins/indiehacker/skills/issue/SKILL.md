@@ -95,7 +95,7 @@ model: sonnet
 
 ### 2. Backlog 本文の組み立て
 
-Backlog テンプレートの正本は **org 共通リポジトリ [theindiehacker/.github](https://github.com/theindiehacker/.github) の `.github/ISSUE_TEMPLATE/backlog.md`**。GitHub の default community health files の仕様どおり、**対象リポジトリに自前のテンプレートがあればそちらが優先**され、無い場合に org 共通テンプレートが適用される。org 共通テンプレートはワーキングツリーに存在しないため、`Read` ではなく以下で取得し、その構造に従う:
+Backlog テンプレートの正本は **org 共通リポジトリ `<owner>/.github` の `.github/ISSUE_TEMPLATE/backlog.md`**（`<owner>` は対象リポジトリの owner。org 名はハードコードせず実行時に導出する）。GitHub の default community health files の仕様どおり、**対象リポジトリに自前のテンプレートがあればそちらが優先**され、無い場合に org 共通テンプレートが適用される。org 共通テンプレートはワーキングツリーに存在しないため、`Read` ではなく以下で取得し、その構造に従う:
 
 ```bash
 # ローカル (リポジトリ固有) のテンプレートが最優先。無ければ org 共通テンプレートを取得する。
@@ -103,8 +103,9 @@ TEMPLATE=$(ls .github/ISSUE_TEMPLATE/backlog.md 2>/dev/null | head -1)
 if [ -n "$TEMPLATE" ]; then
   cat "$TEMPLATE"
 else
+  OWNER=$(gh repo view --json owner -q .owner.login)
   gh api -H "Accept: application/vnd.github.raw" \
-    repos/theindiehacker/.github/contents/.github/ISSUE_TEMPLATE/backlog.md
+    "repos/${OWNER}/.github/contents/.github/ISSUE_TEMPLATE/backlog.md"
 fi
 ```
 

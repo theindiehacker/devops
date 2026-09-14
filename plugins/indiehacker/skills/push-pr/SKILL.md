@@ -94,7 +94,7 @@ fi
 
 ### 3. PR テンプレートの取得と適用
 
-PR テンプレートの正本は **org 共通リポジトリ [theindiehacker/.github](https://github.com/theindiehacker/.github) の `.github/PULL_REQUEST_TEMPLATE.md`**。GitHub の default community health files の仕様どおり、**対象リポジトリに自前のテンプレートがあればそちらが優先**され、無い場合に org 共通テンプレートが適用される。org 共通テンプレートはワーキングツリーに存在しないため、`Read` ではなく以下で取得する:
+PR テンプレートの正本は **org 共通リポジトリ `<owner>/.github` の `.github/PULL_REQUEST_TEMPLATE.md`**（`<owner>` は対象リポジトリの owner。org 名はハードコードせず実行時に導出する）。GitHub の default community health files の仕様どおり、**対象リポジトリに自前のテンプレートがあればそちらが優先**され、無い場合に org 共通テンプレートが適用される。org 共通テンプレートはワーキングツリーに存在しないため、`Read` ではなく以下で取得する:
 
 ```bash
 # ローカル (リポジトリ固有) のテンプレートが最優先。無ければ org 共通テンプレートを取得する。
@@ -103,14 +103,15 @@ TEMPLATE=$(ls .github/PULL_REQUEST_TEMPLATE.md PULL_REQUEST_TEMPLATE.md \
 if [ -n "$TEMPLATE" ]; then
   cat "$TEMPLATE"
 else
+  OWNER=$(gh repo view --json owner -q .owner.login)
   gh api -H "Accept: application/vnd.github.raw" \
-    repos/theindiehacker/.github/contents/.github/PULL_REQUEST_TEMPLATE.md
+    "repos/${OWNER}/.github/contents/.github/PULL_REQUEST_TEMPLATE.md"
 fi
 ```
 
 取得したテンプレートに従って PR を作成する。**各セクションの埋め方（Todo Issue からのマッピング・🙆‍♂️ やったこと の書き方など）はテンプレートの HTML コメントに集約しているので、それを順守する**（SKILL.md に複製しない）。取得に失敗した場合 (ネットワーク断・`gh` 未認証など) のみ「💡 概要 / 🙆‍♂️ やったこと / 🙅‍♂️ やらないこと / ✔️ 動作確認」の構成で書く。
 
-対応する Todo Issue (`/indiehacker:refine` で作成、[theindiehacker/.github](https://github.com/theindiehacker/.github) の `.github/ISSUE_TEMPLATE/todo.md` 構造) があれば、コメントのマッピングに従って各セクションをそのまま転記する。無い PR (バグ修正・ドキュメントのみ等) は直接埋める。
+対応する Todo Issue (`/indiehacker:refine` で作成、org 共通リポジトリ `<owner>/.github` の `.github/ISSUE_TEMPLATE/todo.md` 構造) があれば、コメントのマッピングに従って各セクションをそのまま転記する。無い PR (バグ修正・ドキュメントのみ等) は直接埋める。
 
 ### 4. チェックリスト
 

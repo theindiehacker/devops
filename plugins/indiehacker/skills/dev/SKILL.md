@@ -11,7 +11,7 @@ claude.ai/code から `/indiehacker:dev {Issue 番号}` で起動し、実装 �
 
 このスキルは以下に依存している。挙動が変わった場合はここを更新する:
 
-- **PR コメント `/code-review`** — `theindiehacker/github-workflows` の reusable workflow を呼ぶ caller ワークフローを起動し、指摘を**該当行へのインラインコメント**として投稿する。**コメント完全一致でのみ起動**し、PR レビューを APPROVED / CHANGES_REQUESTED として submit することはない（`/code-review fable` で Fable 5.1 を使う）
+- **PR コメント `/code-review`** — `github-workflows` の reusable workflow を呼ぶ caller ワークフロー（`/indiehacker:install-review-workflow` が導入）を起動し、指摘を**該当行へのインラインコメント**として投稿する。**コメント完全一致でのみ起動**し、PR レビューを APPROVED / CHANGES_REQUESTED として submit することはない（`/code-review fable` で Fable 5.1 を使う）
 - このプラグインの push-pr スキル（`/indiehacker:push-pr`） — PR 作成・更新のセルフレビューと Ready 化までを担う
 - プロジェクトの `CLAUDE.md` — 完了条件（テスト・Lint の通過、フックを `--no-verify` で迂回しない）とレビュー指摘プレフィックス規約（`[must]` / `[imo]` / `[nits]` / `[ask]`）
 
@@ -97,11 +97,11 @@ RUNS=$(gh run list --workflow=claude-review.yml --json headSha,status,conclusion
 if [ "$(echo "$RUNS" | jq -r --arg sha "$HEAD_SHA" '[.[] | select(.headSha == $sha)] | length')" -eq 0 ]; then
   gh pr comment "$PR_NUMBER" --body "/code-review"
 fi
-```
 
-投稿後、**その SHA に対する run の完了**を待つ。間隔は 30 → 60 → 120 → 240 → 300 秒（上限 5 分）で指数バックオフし、累計 30 分でタイムアウトする:
-
-```bash
+# --- 以降は同じ Bash 呼び出しで続ける ---
+# Bash ツールはシェル変数を呼び出し間で保持しないため、$HEAD_SHA を失わないよう分割しないこと。
+# その SHA に対する run の完了を待つ。間隔は 30 → 60 → 120 → 240 → 300 秒（上限 5 分）で
+# 指数バックオフし、累計 30 分でタイムアウトする。
 DELAY=30
 ELAPSED=0
 LIMIT=$((30 * 60))
