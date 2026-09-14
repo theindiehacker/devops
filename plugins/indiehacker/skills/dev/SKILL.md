@@ -23,7 +23,9 @@ claude.ai/code から `/indiehacker:dev {Issue 番号}` で起動し、実装 �
 
 ```bash
 ISSUE_NUMBER={引数}
-gh issue view "$ISSUE_NUMBER" --json title,body,labels
+# gh issue view --json は GraphQL のため使わない (Claude Code セッションでは 403)
+gh api "repos/{owner}/{repo}/issues/${ISSUE_NUMBER}" \
+  --jq '{title, body, labels:[.labels[].name]}'
 ```
 
 - ユーザーストーリー / 達成条件を読み、不明点があれば `AskUserQuestion` で確認する（claude.ai/code 経由なら通知が飛ぶ）
@@ -98,7 +100,10 @@ HEAD_SHA=$(gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}" --jq .head.sha)
 # この SHA に対する run が既にあるか確認してから投稿する
 RUNS=$(gh run list --workflow=claude-review.yml --json headSha,status,conclusion,databaseId --limit 50)
 if [ "$(echo "$RUNS" | jq -r --arg sha "$HEAD_SHA" '[.[] | select(.headSha == $sha)] | length')" -eq 0 ]; then
-  gh pr comment "$PR_NUMBER" --body "/code-review"
+  # gh pr comment は使わない。issue comments の REST に投稿する
+  jq -n --arg body "/code-review" '{body:$body}' > /tmp/review_request.json
+  gh api --method POST "repos/{owner}/{repo}/issues/${PR_NUMBER}/comments" \
+    --input /tmp/review_request.json > /dev/null
 fi
 
 # --- 以降は同じ Bash 呼び出しで続ける ---
@@ -253,7 +258,10 @@ done < /tmp/responded_comment_ids.txt
 1. PR にマージ準備完了の通知コメントを投稿:
 
    ```bash
-   gh pr comment "$PR_NUMBER" --body "レビューの [must] 指摘はすべて対応済みです。マージ可能です。"
+   jq -n --arg body "レビューの [must] 指摘はすべて対応済みです。マージ可能です。" '{body:$body}' \
+     > /tmp/done_comment.json
+   gh api --method POST "repos/{owner}/{repo}/issues/${PR_NUMBER}/comments" \
+     --input /tmp/done_comment.json > /dev/null
    ```
 
 2. PR 番号と URL を最終出力としてユーザーに返す（claude.ai/code のセッション結果としてスマホに通知される）

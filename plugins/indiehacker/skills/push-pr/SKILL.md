@@ -14,11 +14,28 @@ model: sonnet
 
 このプロジェクトでは通常 `main` をベースとするが、誤ったベースに PR を出すリスクを下げるため明示的に確定させる:
 
-1. **既存 PR がある場合** はその PR のベースをそのまま使う（運用変更や別ベース運用への切り替えに対する保険）:
+1. **既存 PR がある場合** はその PR のベースをそのまま使う（運用変更や別ベース運用への切り替えに対する保険）。
+
+   > **`gh pr view --json` を使わないこと。** `number` を除く全フィールドが内部で GraphQL を叩くが、
+   > **Claude Code セッションでは GraphQL が 403 でブロックされる**（実測確認済み）。REST (`gh api`) を使う。
+   > `repos/{owner}/{repo}` のプレースホルダは gh が git remote からローカル解決する（GraphQL 不要）。
+
+   **必ず 1 回の `Bash` 呼び出しで実行する**（Bash ツールはシェル変数を呼び出し間で保持しない）:
+
    ```bash
-   BASE_BRANCH=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || echo "")
+   BRANCH=$(git branch --show-current)
+   OWNER=$(gh api 'repos/{owner}/{repo}' --jq .owner.login)
+   # PR 未作成なら PR_NUMBER は空文字になる（非ゼロ終了しない）
+   PR_NUMBER=$(gh api "repos/{owner}/{repo}/pulls?head=${OWNER}:${BRANCH}&state=open" --jq '.[0].number // empty')
+
+   BASE_BRANCH=""
+   if [ -n "$PR_NUMBER" ]; then
+     BASE_BRANCH=$(gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}" --jq .base.ref)
+   fi
+   echo "PR_NUMBER=${PR_NUMBER:-<未作成>} BASE_BRANCH=${BASE_BRANCH:-<未確定>} OWNER=$OWNER BRANCH=$BRANCH"
    ```
-   PR 未作成時は `gh pr view` が非ゼロ終了するため、`|| echo ""` で空文字に正規化する（`set -e` 環境でも中断しない）。
+
+   出力した `PR_NUMBER` / `BASE_BRANCH` / `OWNER` は以降のステップでリテラルとして埋めて使う。
 
 2. 取得できなければ `main` を使う:
    ```bash
@@ -46,7 +63,7 @@ claude-opus-5・フレッシュコンテキストで `/security-review` を実�
 
 **レビューの要否はこのスキルが判断する**（レビューは高単価なため、全 PR 自動実行ではなく必要な PR に絞る）。
 `git diff "$BASE_BRANCH"...HEAD` に以下のいずれかが含まれるなら「要」と判定し、ステップ 11 の冒頭で
-`gh pr comment <PR番号> --body "/security-review"` を投稿する:
+`/security-review` をコメント投稿する（下記「コメント投稿」のイディオムを使う）:
 
 - 認証認可・セッション・トークン・パスワード・暗号・シークレットの取り扱いに触れる変更
 - テナント / User Pool 境界（`app_id` / `pool_id` / `owner_tenant_id` スコープ、RLS）に関わる変更
@@ -83,10 +100,10 @@ fi
 
 ### 2. PR の存在確認
 
-`gh pr view --json number -q .number` で現在のブランチに PR が既に存在するか確認する。
+ステップ 1-a で取得済みの `PR_NUMBER` で分岐する（再取得は不要）。
 
-- **PR が存在しない場合** → ステップ 3（新規作成フロー）へ
-- **PR が存在する場合** → ステップ 7（更新フロー、PR 説明欄の更新から開始）へ
+- **`PR_NUMBER` が空（PR 未作成）** → ステップ 3（新規作成フロー）へ
+- **`PR_NUMBER` に値がある** → ステップ 7（更新フロー、PR 説明欄の更新から開始）へ
 
 ---
 
@@ -103,7 +120,7 @@ TEMPLATE=$(ls .github/PULL_REQUEST_TEMPLATE.md PULL_REQUEST_TEMPLATE.md \
 if [ -n "$TEMPLATE" ]; then
   cat "$TEMPLATE"
 else
-  OWNER=$(gh repo view --json owner -q .owner.login)
+  OWNER=$(gh api 'repos/{owner}/{repo}' --jq .owner.login)
   gh api -H "Accept: application/vnd.github.raw" \
     "repos/${OWNER}/.github/contents/.github/PULL_REQUEST_TEMPLATE.md"
 fi
@@ -129,12 +146,29 @@ PR 作成前に以下を確認:
 
 ### 6. PR 作成
 
-`gh pr create` で PR を作成。本文はステップ 3 で取得した PR テンプレートに従う。
+PR 本文はステップ 3 で取得した PR テンプレートに従い、`/tmp/pr_body.md` に書き出しておく。
 
-必須フラグ:
-- `--base "$BASE_BRANCH"` (ステップ 1-a で確定した値。`gh` の既定はリポジトリのデフォルトブランチなので、別ベース運用に備えて明示する)
-- `--assignee @me` (Assignees にユーザー自身を指定)
-- `--draft` (ステップ 5 で Draft を選んだ場合のみ)
+**`gh pr create` を使わないこと。** gh の生成系サブコマンドは GraphQL mutation を使い、Claude Code セッションでは 403 でブロックされる（同系統の `gh issue create` で実測確認済み）。REST で作成する。
+本文は改行やバッククォートを含むため `-f` ではなく **`jq -n --rawfile` で JSON を組み立てて `--input`** で渡す:
+
+```bash
+# BASE_BRANCH / BRANCH はステップ 1-a の値をリテラルで埋める
+jq -n --arg title "PR タイトル" --arg head "$BRANCH" --arg base "$BASE_BRANCH" \
+      --rawfile body /tmp/pr_body.md --argjson draft false \
+  '{title:$title, head:$head, base:$base, body:$body, draft:$draft}' > /tmp/pr_create.json
+
+PR_NUMBER=$(gh api --method POST "repos/{owner}/{repo}/pulls" --input /tmp/pr_create.json --jq .number)
+
+# Assignees にユーザー自身を指定する (gh pr create --assignee @me の代替)
+ME=$(gh api user --jq .login)
+jq -n --arg me "$ME" '{assignees:[$me]}' > /tmp/pr_assignees.json
+gh api --method POST "repos/{owner}/{repo}/issues/${PR_NUMBER}/assignees" --input /tmp/pr_assignees.json > /dev/null
+
+echo "PR_NUMBER=$PR_NUMBER"
+```
+
+- `base` はステップ 1-a で確定した値を必ず明示する（別ベース運用に備える）
+- Draft で作る場合（ステップ 5 で選んだとき）は `--argjson draft true` にする
 
 作成後、ステップ 10（Diff コメントの投稿）へ進む。新規作成時は削除対象の既存コメントがないため、ステップ 9 はスキップする。
 
@@ -144,14 +178,14 @@ PR 作成前に以下を確認:
 
 ### 7. PR 説明欄の更新
 
-> ⚠️ **CRITICAL: `gh pr edit --body` の全体置換は破壊的操作。** PR 本文はユーザがブラウザから手動編集する前提 (「✔️ 動作確認」のスクショ・`| Before | After |` 表・デプロイリンク等)。これらの追記を消さないこと。
+> ⚠️ **CRITICAL: PR 本文の全体置換は破壊的操作。** PR 本文はユーザがブラウザから手動編集する前提 (「✔️ 動作確認」のスクショ・`| Before | After |` 表・デプロイリンク等)。これらの追記を消さないこと。
 
 #### 7-a. 現在の本文を取得して上書きリスクを検出
 
 最新のコミット履歴と差分を反映する前に、必ず現在の本文を取得し、ユーザの追記がないか確認する:
 
 ```bash
-gh pr view --json body --jq .body > /tmp/pr_current_body.md
+gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}" --jq .body > /tmp/pr_current_body.md
 ```
 
 取得した本文をステップ 3 の PR テンプレートと比較し、テンプレートのプレースホルダ (`<!-- ... -->`) 以外に **実質的な追記がないか** を判定する。具体的には以下のいずれかが見つかれば「ユーザ追記あり」と判定:
@@ -160,23 +194,25 @@ gh pr view --json body --jq .body > /tmp/pr_current_body.md
 - 「💡 概要」「🙆‍♂️ やったこと」「🙅‍♂️ やらないこと」のいずれかに、コミットメッセージや diff から導出できない説明（背景・意図・制約など）が記載されている
 - テンプレートに無いセクションが追加されている
 
-「ユーザ追記あり」と判定した場合は、`AskUserQuestion` で「ユーザの追記を保持したまま◯◯セクションのみ更新してよいか」を確認する。**回答を得るまで `gh pr edit` は実行しない**。
+「ユーザ追記あり」と判定した場合は、`AskUserQuestion` で「ユーザの追記を保持したまま◯◯セクションのみ更新してよいか」を確認する。**回答を得るまで `PATCH .../pulls/${PR_NUMBER}` は実行しない**。
 
 #### 7-b. 安全な部分更新
 
 ユーザ追記を保持する場合、`/tmp/pr_current_body.md` を `Read` ツールで読み込み、`Edit` ツールで対象セクション（通常は「🙆‍♂️ やったこと」「🙅‍♂️ やらないこと」）のみを書き換える。書き換えた内容を以下で反映する:
 
 ```bash
-gh pr edit --body "$(cat /tmp/pr_current_body.md)"
+jq -n --rawfile body /tmp/pr_current_body.md '{body:$body}' > /tmp/pr_body_patch.json
+gh api --method PATCH "repos/{owner}/{repo}/pulls/${PR_NUMBER}" --input /tmp/pr_body_patch.json > /dev/null
 ```
 
 ユーザ追記がない（テンプレートのプレースホルダのままで実質的な追加情報がない）と確認できた場合のみ、以下の方式で全体置換してよい:
 
 ```bash
-gh pr edit --body "$(cat <<'EOF'
+cat > /tmp/pr_current_body.md <<'EOF'
 更新後の PR 本文
 EOF
-)"
+jq -n --rawfile body /tmp/pr_current_body.md '{body:$body}' > /tmp/pr_body_patch.json
+gh api --method PATCH "repos/{owner}/{repo}/pulls/${PR_NUMBER}" --input /tmp/pr_body_patch.json > /dev/null
 ```
 
 - ステップ 3 の PR テンプレートのセクション構造は維持する
@@ -189,7 +225,7 @@ EOF
 PR 説明欄の更新後、Draft かどうかを確認する:
 
 ```bash
-gh pr view --json isDraft -q .isDraft
+gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}" --jq .draft
 ```
 
 - **Draft でない場合** → ステップ 9（既存 Diff コメントの削除）へ
@@ -220,8 +256,11 @@ PR 本文の「✔️ 動作確認」セクション（`### ✔️ 動作確認`
 動作確認チェックを通過したら、Draft を解除する:
 
 ```bash
-gh pr ready
+gh api --method POST "repos/{owner}/{repo}/pulls/${PR_NUMBER}/ccr/ready_for_review" > /dev/null
 ```
+
+> `gh pr ready` は GraphQL mutation のため使えない。Draft に戻す場合は
+> `POST repos/{owner}/{repo}/pulls/${PR_NUMBER}/ccr/convert_to_draft`。
 
 ---
 
@@ -231,8 +270,8 @@ gh pr ready
 既存のレビューコメントを取得し、自分が投稿したコメントを削除する:
 
 ```bash
-PR_NUMBER=$(gh pr view --json number -q .number)
-CURRENT_USER=$(gh api user -q .login)
+# PR_NUMBER はステップ 1-a の値をリテラルで埋める
+CURRENT_USER=$(gh api user --jq .login)
 
 # 自分が投稿した Diff コメントの ID を取得して削除
 gh api repos/{owner}/{repo}/pulls/${PR_NUMBER}/comments \
@@ -267,8 +306,8 @@ PR 作成・更新後、レビュアーが実装意図を理解できるよう�
 `gh api` の `-f "comments[0][path]=..."` 形式は GitHub API が配列として認識しないため、JSON ファイル経由の `--input` を使用すること:
 
 ```bash
-PR_NUMBER=$(gh pr view --json number -q .number)
-COMMIT_ID=$(gh pr view --json headRefOid -q .headRefOid)
+# PR_NUMBER はステップ 1-a の値をリテラルで埋める
+COMMIT_ID=$(gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}" --jq .head.sha)
 
 cat > /tmp/pr_review.json <<EOF
 {
@@ -303,6 +342,19 @@ gh api repos/{owner}/{repo}/pulls/${PR_NUMBER}/reviews \
 ### 11. CI 監視とレビューコメントへの対応・返信
 
 PR 作成 / 更新後は、まずステップ 1-c の判断に従い、必要な場合のみ PR に `/security-review` とコメントしてセキュリティレビューを依頼する。続いて CI を監視し、失敗はフックをスキップせず修正・再 push。CI 通過後は bot / 人のレビュー（本文・インライン・会話）を全件確認し、`[must]`/`[imo]`/`[ask]`/`[nits]` 規約と CLAUDE.md の指摘対応方針で採否を判断。修正は CI 再監視、全件に日本語で返信する。修正 push 後の再レビューは、コードレビューなら `/code-review`、セキュリティレビュー由来の指摘なら `/security-review` を PR にコメントして依頼する（いずれもコメント完全一致でのみ起動する）。
+
+## コメント投稿のイディオム
+
+**`gh pr comment` を使わないこと**（同上）。PR へのコメントは
+issue comments の REST エンドポイントに投稿する。本文は `jq -n` で JSON にしてから渡す:
+
+```bash
+jq -n --arg body "/security-review" '{body:$body}' > /tmp/pr_comment.json
+gh api --method POST "repos/{owner}/{repo}/issues/${PR_NUMBER}/comments" --input /tmp/pr_comment.json > /dev/null
+```
+
+レビュー依頼コメント（`/code-review` / `/security-review`）は**完全一致でのみ起動する**ため、
+前後に文字を足さないこと。
 
 ## 注意事項
 

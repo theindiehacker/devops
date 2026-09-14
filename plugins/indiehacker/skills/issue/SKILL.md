@@ -103,7 +103,7 @@ TEMPLATE=$(ls .github/ISSUE_TEMPLATE/backlog.md 2>/dev/null | head -1)
 if [ -n "$TEMPLATE" ]; then
   cat "$TEMPLATE"
 else
-  OWNER=$(gh repo view --json owner -q .owner.login)
+  OWNER=$(gh api 'repos/{owner}/{repo}' --jq .owner.login)
   gh api -H "Accept: application/vnd.github.raw" \
     "repos/${OWNER}/.github/contents/.github/ISSUE_TEMPLATE/backlog.md"
 fi
@@ -416,18 +416,29 @@ Backlog 起票が単なる「思いつき投稿」になってしまう。ヒア
 
 ### 4. GitHub Issue の作成
 
-`gh` CLI で作成する。本文は改行を保つため、**まず `Write` ツールで一時ファイルに書き出してから** `--body-file` で渡す:
+`gh api`（REST）で作成する。本文は改行を保つため、**まず `Write` ツールで一時ファイルに書き出し**、
+`jq -n --rawfile` で JSON に組み立ててから `--input` で渡す。
+
+> **`gh issue create` を使わないこと。** 内部で GraphQL を叩くが、**Claude Code セッションでは
+> GraphQL が 403 でブロックされる**（実測確認済み）。`gh label create` も同様。
 
 1. `Write` ツールで、ユーザーが承認した本文を `/tmp/backlog-body.md` に書き出す。
-2. Issue を作成する（`backlog` ラベルが未作成のリポジトリでは `gh label create` が必要なので、失敗したら作ってから再実行する）:
+2. Issue を作成する（`backlog` ラベルが未作成のリポジトリでは先にラベルを作る）:
 
 ```bash
-gh issue create --title "{絵文字} {タイトル}" --label backlog --body-file /tmp/backlog-body.md \
-  || { gh label create backlog --description "リファインメント前の要望" --color ededed &&
-       gh issue create --title "{絵文字} {タイトル}" --label backlog --body-file /tmp/backlog-body.md; }
+# ラベルが無ければ作る (既にあれば 422 になるので握りつぶす)
+jq -n '{name:"backlog", description:"リファインメント前の要望", color:"ededed"}' > /tmp/label.json
+gh api --method POST "repos/{owner}/{repo}/labels" --input /tmp/label.json > /dev/null 2>&1 || true
+
+jq -n --arg title "{絵文字} {タイトル}" --rawfile body /tmp/backlog-body.md \
+  '{title:$title, body:$body, labels:["backlog"]}' > /tmp/backlog-issue.json
+
+gh api --method POST "repos/{owner}/{repo}/issues" --input /tmp/backlog-issue.json \
+  --jq '"作成: #\(.number) \(.html_url)"'
 ```
 
-GitHub MCP サーバーが使える環境なら `mcp__github__issue_write` でもよいが、`gh` を既定とする（このプラグインの他スキルはすべて `gh` を使っており、MCP サーバーは前提にしていない）。
+GitHub MCP サーバーが使える環境なら `mcp__github__issue_write` でもよいが、`gh api` を既定とする
+（このプラグインの他スキルはすべて `gh` を使っており、MCP サーバーは前提にしていない）。
 
 - **タイトル**: §「タイトル」のルールに従い、先頭に絵文字を付ける (例: `✨ 経費申請の承認状態を一覧表示`)
 - **ラベル**: `backlog` を設定する (ステップ 2 で取得した Backlog テンプレートの frontmatter と一致)
