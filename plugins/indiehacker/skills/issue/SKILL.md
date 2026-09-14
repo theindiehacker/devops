@@ -419,7 +419,7 @@ Backlog 起票が単なる「思いつき投稿」になってしまう。ヒア
 `gh api`（REST）で作成する。本文は改行を保つため、**まず `Write` ツールで一時ファイルに書き出し**、
 `jq -n --rawfile` で JSON に組み立ててから `--input` で渡す。
 
-> **`gh issue create` を使わないこと。** 内部で GraphQL を叩くが、**Claude Code セッションでは
+> **`gh issue create` を使わないこと。** 内部で GraphQL を叩くが、**claude.ai/code のセッションでは
 > GraphQL が 403 でブロックされる**（実測確認済み）。`gh label create` も同様。
 
 1. `Write` ツールで、ユーザーが承認した本文を `/tmp/backlog-body.md` に書き出す。

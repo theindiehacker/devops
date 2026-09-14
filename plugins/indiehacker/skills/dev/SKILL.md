@@ -23,7 +23,7 @@ claude.ai/code から `/indiehacker:dev {Issue 番号}` で起動し、実装 �
 
 ```bash
 ISSUE_NUMBER={引数}
-# gh issue view --json は GraphQL のため使わない (Claude Code セッションでは 403)
+# gh issue view --json は GraphQL のため使わない (claude.ai/code のセッションでは 403)
 gh api "repos/{owner}/{repo}/issues/${ISSUE_NUMBER}" \
   --jq '{title, body, labels:[.labels[].name]}'
 ```
@@ -60,10 +60,12 @@ Issue に `🧪 テスト方針`（入力 → 期待値）があり、リポジ�
 **このとき DDD 規約の絶対パスを prompt に列挙して渡す。** プラグインはプロジェクト外に install されるためサブエージェントは `Glob` では規約を見つけられず、渡さないと要約だけで鑑定してしまう。パスが手元に無ければ、次で列挙できる:
 
 ```bash
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
+# 右辺の表記はスキル読み込み時に Claude Code がプラグインの実パスへ置換する（`:-` などの修飾を付けると置換されない）。
+# 置換されなかった場合だけキャッシュを探す。旧バージョンが残っていることがあるので最新版を選ぶ
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
 if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
-  PLUGIN_ROOT=$(find "$HOME/.claude/plugins" "${CLAUDE_PROJECT_DIR:-.}/.claude/plugins" \
-    -maxdepth 6 -type d -path '*/indiehacker/*' -name rules 2>/dev/null | head -1)
+  PLUGIN_ROOT=$(find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache" -mindepth 4 -maxdepth 4 \
+    -type d -path '*/indiehacker/*' -name rules 2>/dev/null | sort -V | tail -1)
   PLUGIN_ROOT="${PLUGIN_ROOT%/rules}"
 fi
 ls "$PLUGIN_ROOT"/rules/backend/src/domain/model/*.md "$PLUGIN_ROOT"/rules/backend/src/application/application.md
@@ -92,39 +94,69 @@ PR_NUMBER=$(gh api "repos/{owner}/{repo}/pulls?head=${OWNER}:${BRANCH}" --jq '.[
 ### 5. レビューの起動と完了待機（指数バックオフ）
 
 レビューは **PR に `/code-review` とコメントして起動する**（コメント完全一致。前後に文字を足すと起動しない）。
-同一 SHA に対する二重起動を避けるため、その SHA でまだ起動していない場合だけ投稿する:
+
+> **run は SHA では特定できない。** `issue_comment` で起動した run の `headSha` / `headBranch` は
+> **デフォルトブランチの HEAD** になり、PR の HEAD SHA とは一致しない（実測確認済み）。
+> また caller はリポジトリ内の**すべての**コメントで起動し、無関係なコメントの run は job が `skipped` で終わる。
+> そのため run は「依頼コメントの投稿時刻以降に作られた」「`display_title` が PR タイトルと一致する」
+> 「`code-review` job が実際に動いた（`in_progress`、または `skipped` 以外で `completed`）」の 3 条件で特定する。
+
+**必ず 1 回の `Bash` 呼び出しで実行する**（Bash ツールはシェル変数を呼び出し間で保持しない）:
 
 ```bash
 HEAD_SHA=$(gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}" --jq .head.sha)
+PR_TITLE=$(gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}" --jq .title)
+HEAD_DATE=$(gh api "repos/{owner}/{repo}/commits/${HEAD_SHA}" --jq .commit.committer.date)
+ME=$(gh api user --jq .login)
 
-# この SHA に対する run が既にあるか確認してから投稿する
-RUNS=$(gh run list --workflow=claude-review.yml --json headSha,status,conclusion,databaseId --limit 50)
-if [ "$(echo "$RUNS" | jq -r --arg sha "$HEAD_SHA" '[.[] | select(.headSha == $sha)] | length')" -eq 0 ]; then
+# 1) HEAD コミット以降に自分が /code-review を投稿済みなら再投稿しない（連投すると先行 run が concurrency で kill される）。
+#    --paginate はページごとに配列を出すので jq -s で連結する
+REQUESTED_AT=$(gh api "repos/{owner}/{repo}/issues/${PR_NUMBER}/comments?since=${HEAD_DATE}&per_page=100" --paginate \
+  | jq -rs --arg me "$ME" --arg since "$HEAD_DATE" \
+      '[(add // [])[] | select(.user.login == $me and .body == "/code-review" and .created_at >= $since) | .created_at] | last // empty')
+if [ -z "$REQUESTED_AT" ]; then
   # gh pr comment は使わない。issue comments の REST に投稿する
-  jq -n --arg body "/code-review" '{body:$body}' > /tmp/review_request.json
-  gh api --method POST "repos/{owner}/{repo}/issues/${PR_NUMBER}/comments" \
-    --input /tmp/review_request.json > /dev/null
+  jq -n '{body:"/code-review"}' > /tmp/review_request.json
+  REQUESTED_AT=$(gh api --method POST "repos/{owner}/{repo}/issues/${PR_NUMBER}/comments" \
+    --input /tmp/review_request.json --jq .created_at)
 fi
+echo "HEAD_SHA=$HEAD_SHA REQUESTED_AT=$REQUESTED_AT"
 
-# --- 以降は同じ Bash 呼び出しで続ける ---
-# Bash ツールはシェル変数を呼び出し間で保持しないため、$HEAD_SHA を失わないよう分割しないこと。
-# その SHA に対する run の完了を待つ。間隔は 30 → 60 → 120 → 240 → 300 秒（上限 5 分）で
-# 指数バックオフし、累計 30 分でタイムアウトする。
+# 2) 依頼に対応する run を特定し、code-review job の完了を待つ。間隔は 30 → 60 → 120 → 240 → 300 秒
+#    （上限 5 分）で指数バックオフし、累計 30 分でタイムアウトする。
 DELAY=30
 ELAPSED=0
 LIMIT=$((30 * 60))
+RUN_ID=""
 REVIEW_DONE=false
+REVIEW_CONCLUSION=""
 CI_FAILED=false
 while [ "$ELAPSED" -lt "$LIMIT" ]; do
-  RUNS=$(gh run list --workflow=claude-review.yml --json headSha,status,conclusion --limit 50)
-  REVIEW_DONE=$(echo "$RUNS" | jq -r --arg sha "$HEAD_SHA" \
-    '[.[] | select(.headSha == $sha and .status == "completed")] | length > 0')
-  CI_FAILED=$(gh api "repos/{owner}/{repo}/commits/${HEAD_SHA}/check-runs" \
+  if [ -z "$RUN_ID" ]; then
+    # run は新しい順に並ぶ。同じ PR への依頼が複数あれば、concurrency で生き残る最新の run を採る
+    for id in $(gh api "repos/{owner}/{repo}/actions/workflows/claude-review.yml/runs?event=issue_comment&created=%3E%3D${REQUESTED_AT}&per_page=100" \
+                  | jq -r --arg t "$PR_TITLE" '.workflow_runs[] | select(.display_title == $t) | .id'); do
+      if [ "$(gh api "repos/{owner}/{repo}/actions/runs/${id}/jobs" \
+              | jq '[.jobs[] | select((.name | startswith("code-review")) and (.status == "in_progress" or (.status == "completed" and .conclusion != "skipped")))] | length > 0')" = "true" ]; then
+        RUN_ID=$id
+        break
+      fi
+    done
+  fi
+
+  if [ -n "$RUN_ID" ]; then
+    JOB=$(gh api "repos/{owner}/{repo}/actions/runs/${RUN_ID}/jobs" \
+      | jq -r '[.jobs[] | select(.name | startswith("code-review"))][0] | "\(.status) \(.conclusion // "")"')
+    if [ "${JOB%% *}" = "completed" ]; then
+      REVIEW_DONE=true
+      REVIEW_CONCLUSION=${JOB#* }
+    fi
+  fi
+  CI_FAILED=$(gh api "repos/{owner}/{repo}/commits/${HEAD_SHA}/check-runs?per_page=100" \
     --jq '[.check_runs[]? | select(.conclusion == "failure")] | length > 0')
 
   # レビュー完了、または CI 失敗を検知したらステップ 6 へ
   if [ "$REVIEW_DONE" = "true" ] || [ "$CI_FAILED" = "true" ]; then
-    echo "review_done=$REVIEW_DONE ci_failed=$CI_FAILED"
     break
   fi
 
@@ -132,16 +164,25 @@ while [ "$ELAPSED" -lt "$LIMIT" ]; do
   ELAPSED=$((ELAPSED + DELAY))
   DELAY=$(( DELAY * 2 > 300 ? 300 : DELAY * 2 ))
 done
+echo "run_id=${RUN_ID:-<未検出>} review_done=$REVIEW_DONE review_conclusion=${REVIEW_CONCLUSION:-<未完了>} ci_failed=$CI_FAILED"
 ```
 
-タイムアウトした場合（run が作られない / 完了しない）は、以下の順で切り分ける:
+タイムアウトした場合、または `review_conclusion` が `success` 以外の場合は、以下の順で切り分ける:
 
-1. `gh run list --workflow=claude-review.yml --limit 5` で run 自体が作られているか確認する。
-   **0 件なら caller ワークフローが未導入か、まだ main にマージされていない**
+1. **`run_id` が未検出** → caller ワークフローがデフォルトブランチにあるか確認する:
+
+   ```bash
+   gh api "repos/{owner}/{repo}/actions/workflows/claude-review.yml" --jq .state
+   ```
+
+   404 なら **caller ワークフローが未導入か、まだデフォルトブランチにマージされていない**
    （`issue_comment` は常にデフォルトブランチ版の定義で実行される）。
    `/indiehacker:install-review-workflow` での導入を案内して終了する。
-2. run はあるが失敗している場合は `gh run view <id> --log-failed` で原因を読む
-   （org シークレット未登録・Claude GitHub App 未 install などの前提不足が多い）。
+   存在するのに見つからない場合は、依頼に対応する run の `code-review` job が `skipped` になっている（起動条件を満たしていない）。
+   PR が open か、投稿者が OWNER / MEMBER / COLLABORATOR かつ Bot でないかを確認する。
+2. **`review_conclusion` が `success` 以外** → `gh run view <run_id> --log-failed` で原因を読む
+   （org シークレット未登録・Claude GitHub App 未 install などの前提不足が多い。
+   `cancelled` は同じ PR への後続の `/code-review` で先行 run が kill された可能性がある）。
 3. それ以外は `AskUserQuestion` で「もう少し待つ / 中断 / 人間に引き継ぐ」を確認する。
 
 ### 6. レビュー結果による分岐
@@ -150,15 +191,30 @@ done
 そのため分岐は review state ではなく、**現 HEAD SHA に対する未 resolve の `[must]` 件数**で行う:
 
 ```bash
-# gh の --json と gh api graphql は Claude Code セッションでブロックされるため、
-# REST と CCR 専用ルートを使う (実測確認済み)。
+# 1) スレッド一覧を取得する。thread の resolve 状態は REST に無いため、
+#    claude.ai/code では CCR 専用ルート、ローカル CLI では GraphQL を使う
+#    （claude.ai/code では GraphQL が 403、ローカル CLI では CCR ルートが 404。いずれも実測確認済み）。
+if ! gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}/ccr/review_threads" > /tmp/review_threads.json 2>/dev/null; then
+  # CCR ルートと同じ形 ({resolved, comment_ids}) にそろえる。thread_id はステップ 7-e の resolve で使う
+  gh api graphql -F owner='{owner}' -F name='{repo}' -F number="$PR_NUMBER" -f query='
+    query($owner: String!, $name: String!, $number: Int!) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100) {
+            nodes { id isResolved comments(first: 1) { nodes { databaseId } } }
+          }
+        }
+      }
+    }' --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | {thread_id: .id, resolved: .isResolved, comment_ids: [.comments.nodes[].databaseId]}]' \
+    > /tmp/review_threads.json || { echo "REVIEW_THREADS_UNAVAILABLE"; exit 1; }
+fi
 
-# 1) 未 resolve スレッドの「先頭コメント ID」を集める (指摘本体。返信は含めない)
-gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}/ccr/review_threads" \
-  --jq '[.[] | select(.resolved == false) | .comment_ids[0]]' > /tmp/open_thread_ids.json
+# 未 resolve スレッドの「先頭コメント ID」を集める (指摘本体。返信は含めない)
+jq '[.[] | select(.resolved == false) | .comment_ids[0]]' /tmp/review_threads.json > /tmp/open_thread_ids.json
 
-# 2) インラインコメント本文を引いて突き合わせる
-gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}/comments" --paginate > /tmp/pr_all_comments.json
+# 2) インラインコメント本文を引いて突き合わせる (--paginate はページごとに配列を出すので jq -s で連結する)
+gh api "repos/{owner}/{repo}/pulls/${PR_NUMBER}/comments?per_page=100" --paginate \
+  | jq -s 'add // []' > /tmp/pr_all_comments.json
 
 jq --slurpfile ids /tmp/open_thread_ids.json \
   '[.[] | select(.id as $i | $ids[0] | index($i))]' /tmp/pr_all_comments.json \
@@ -168,6 +224,7 @@ MUST_COUNT=$(jq '[.[] | select(.body | startswith("[must]"))] | length' /tmp/pr_
 echo "MUST_COUNT=$MUST_COUNT"
 ```
 
+- `REVIEW_CONCLUSION` が `success` 以外（レビュー run が失敗・キャンセル）→ 指摘は数えず、ステップ 5 の切り分け 2 へ
 - `MUST_COUNT == 0` かつ `CI_FAILED == "false"` → ステップ 9（完了処理）へ
 - `MUST_COUNT > 0` → ステップ 7（自己修復）へ。`CI_FAILED == "true"` も並走している場合は 7-c で **同じコミットに CI 修正も含める**
 - `MUST_COUNT == 0` かつ `CI_FAILED == "true"` → ステップ 7 に CI 修正のみで合流。7-a / 7-b / 7-d / 7-e はスキップ可、7-c で `gh run view --log-failed` から原因を特定して修正コミット
@@ -224,16 +281,26 @@ jq -r '.[] | select(.body | startswith("[must]")) | .id' /tmp/pr_inline_comments
 #### 7-e. 対応した会話を Resolve conversation する
 
 PR 上で「未対応指摘の数」を一目で把握できるようにするため、返信した thread を resolve する。
-GraphQL の `resolveReviewThread` は Claude Code セッションでブロックされるため、CCR 専用ルートを使う
-（thread ID ではなく**コメント ID** を渡す。thread マッピングは不要）:
+resolve は REST に無い。claude.ai/code では GraphQL の `resolveReviewThread` がブロックされるため CCR 専用ルート
+（thread ID ではなく**コメント ID** を渡す）を使い、CCR ルートが無いローカル CLI では GraphQL にフォールバックする:
 
 ```bash
 while read -r comment_id; do
   [ -z "$comment_id" ] && continue
   gh api --method POST \
-    "repos/{owner}/{repo}/pulls/${PR_NUMBER}/ccr/comments/${comment_id}/resolve" > /dev/null
+    "repos/{owner}/{repo}/pulls/${PR_NUMBER}/ccr/comments/${comment_id}/resolve" > /dev/null 2>&1 && continue
+  # ローカル CLI: ステップ 6 が GraphQL で取得した /tmp/review_threads.json の thread_id で resolve する
+  thread_id=$(jq -r --argjson cid "$comment_id" \
+    '.[] | select(.comment_ids[0] == $cid) | .thread_id // empty' /tmp/review_threads.json)
+  if [ -n "$thread_id" ] && gh api graphql -F id="$thread_id" \
+       -f query='mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }' > /dev/null; then
+    continue
+  fi
+  echo "RESOLVE_FAILED $comment_id"
 done < /tmp/responded_comment_ids.txt
 ```
+
+`RESOLVE_FAILED` が出た場合は黙って進まず、どのコメントを resolve できなかったかを報告する。
 
 > 完了条件: `[must]` インライン全件に返信が付き、対応した thread がすべて resolve されるまで作業完了とみなさない。ステップ 6 の `MUST_COUNT` は未 resolve thread を数えるため、**resolve を怠るとループが終わらない**。
 
@@ -271,7 +338,8 @@ done < /tmp/responded_comment_ids.txt
 ## 注意事項
 
 - **レビューはコメント完全一致でのみ起動する**: `/code-review`・`/code-review fable`・`/security-review` の 3 つだけ。前後に文字を足した `/code-review お願いします` のようなコメントでは起動しない
-- **同一 SHA に `/code-review` を連投しない**: 先行 run が concurrency で kill される。ステップ 5 のとおり、その SHA の run が無い場合だけ投稿する
+- **同一 SHA に `/code-review` を連投しない**: 先行 run が concurrency で kill される。ステップ 5 のとおり、HEAD コミット以降にまだ依頼していない場合だけ投稿する
+- **run を `headSha` で探さない**: `issue_comment` 起動の run はデフォルトブランチの SHA を持つため、PR の HEAD SHA とは一致しない（ステップ 5）
 - **レビューは自動では走らない**: 修正 push で HEAD SHA が変わっても、`/code-review` を再投稿するまでレビューは起動しない（ステップ 7-f）
 - **resolve を怠るとループが終わらない**: ステップ 6 の `MUST_COUNT` は未 resolve thread を数えるため、対応した thread は 7-e で必ず resolve する
 - **起動できる条件**: PR が open で、コメント投稿者が OWNER / MEMBER / COLLABORATOR かつ Bot でないこと。Bot アカウントから投稿しても起動しない

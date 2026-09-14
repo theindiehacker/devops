@@ -23,12 +23,13 @@ for a in $ARGUMENTS; do
   [ "$a" = "--fix" ] && FIX=true || RANGE="$a"
 done
 
-# プラグインの導入先を特定する。${CLAUDE_PLUGIN_ROOT} は hooks.json 専用で Bash ツールでは
-# 展開されないため（${CLAUDE_SKILL_DIR} は公式に存在しない）、インストール先を実際に探す。
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
+# プラグインの導入先を特定する。右辺の表記はスキル読み込み時に Claude Code がプラグインの実パスへ置換する
+# （`:-` などの修飾を付けると置換されない）。置換されなかった場合だけキャッシュを探す。
+# 旧バージョンが残っていることがあるので最新版を選ぶ
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
 if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
-  PLUGIN_ROOT=$(find "$HOME/.claude/plugins" "${CLAUDE_PROJECT_DIR:-.}/.claude/plugins" \
-    -maxdepth 6 -type d -path '*/indiehacker/*' -name rules 2>/dev/null | head -1)
+  PLUGIN_ROOT=$(find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache" -mindepth 4 -maxdepth 4 \
+    -type d -path '*/indiehacker/*' -name rules 2>/dev/null | sort -V | tail -1)
   PLUGIN_ROOT="${PLUGIN_ROOT%/rules}"
 fi
 if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then

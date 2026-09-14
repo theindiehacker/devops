@@ -17,7 +17,8 @@ model: sonnet
 1. **既存 PR がある場合** はその PR のベースをそのまま使う（運用変更や別ベース運用への切り替えに対する保険）。
 
    > **`gh pr view --json` を使わないこと。** `number` を除く全フィールドが内部で GraphQL を叩くが、
-   > **Claude Code セッションでは GraphQL が 403 でブロックされる**（実測確認済み）。REST (`gh api`) を使う。
+   > **claude.ai/code のセッションでは GraphQL が 403 でブロックされる**（実測確認済み）。REST (`gh api`) を使う
+   > （REST はローカル CLI でもそのまま動く）。
    > `repos/{owner}/{repo}` のプレースホルダは gh が git remote からローカル解決する（GraphQL 不要）。
 
    **必ず 1 回の `Bash` 呼び出しで実行する**（Bash ツールはシェル変数を呼び出し間で保持しない）:
@@ -84,11 +85,12 @@ CI の指摘（該当行へのインラインコメントとして投稿され�
 
 ```bash
 # 規約はこのプラグインに同梱（プロジェクトの .claude/rules/ に同じ相対パスがあればそちらを優先）。
-# ${CLAUDE_PLUGIN_ROOT} は hooks.json 専用で Bash ツールでは展開されないため、導入先を実際に探す。
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
+# 右辺の表記はスキル読み込み時に Claude Code がプラグインの実パスへ置換する（`:-` などの修飾を付けると置換されない）。
+# 置換されなかった場合だけキャッシュを探す。旧バージョンが残っていることがあるので最新版を選ぶ
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
 if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
-  PLUGIN_ROOT=$(find "$HOME/.claude/plugins" "${CLAUDE_PROJECT_DIR:-.}/.claude/plugins" \
-    -maxdepth 6 -type d -path '*/indiehacker/*' -name rules 2>/dev/null | head -1)
+  PLUGIN_ROOT=$(find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache" -mindepth 4 -maxdepth 4 \
+    -type d -path '*/indiehacker/*' -name rules 2>/dev/null | sort -V | tail -1)
   PLUGIN_ROOT="${PLUGIN_ROOT%/rules}"
 fi
 # 解決に失敗したら黙って進まない（$PLUGIN_ROOT が空だと / 直下を指し、以降の Read が全て外れる）
@@ -148,7 +150,7 @@ PR 作成前に以下を確認:
 
 PR 本文はステップ 3 で取得した PR テンプレートに従い、`/tmp/pr_body.md` に書き出しておく。
 
-**`gh pr create` を使わないこと。** gh の生成系サブコマンドは GraphQL mutation を使い、Claude Code セッションでは 403 でブロックされる（同系統の `gh issue create` で実測確認済み）。REST で作成する。
+**`gh pr create` を使わないこと。** gh の生成系サブコマンドは GraphQL mutation を使い、claude.ai/code のセッションでは 403 でブロックされる（同系統の `gh issue create` で実測確認済み）。REST で作成する。
 本文は改行やバッククォートを含むため `-f` ではなく **`jq -n --rawfile` で JSON を組み立てて `--input`** で渡す:
 
 ```bash
@@ -255,12 +257,16 @@ PR 本文の「✔️ 動作確認」セクション（`### ✔️ 動作確認`
 
 動作確認チェックを通過したら、Draft を解除する:
 
+Draft の解除は REST に無い。claude.ai/code では GraphQL mutation の `gh pr ready` が 403 になるため CCR 専用ルートを使い、
+CCR ルートが存在しない（404）ローカル CLI では `gh pr ready` にフォールバックする（いずれも実測確認済み）:
+
 ```bash
-gh api --method POST "repos/{owner}/{repo}/pulls/${PR_NUMBER}/ccr/ready_for_review" > /dev/null
+gh api --method POST "repos/{owner}/{repo}/pulls/${PR_NUMBER}/ccr/ready_for_review" > /dev/null 2>&1 \
+  || gh pr ready "$PR_NUMBER"
 ```
 
-> `gh pr ready` は GraphQL mutation のため使えない。Draft に戻す場合は
-> `POST repos/{owner}/{repo}/pulls/${PR_NUMBER}/ccr/convert_to_draft`。
+> Draft に戻す場合も同じ形で、`POST repos/{owner}/{repo}/pulls/${PR_NUMBER}/ccr/convert_to_draft`
+> → 失敗したら `gh pr ready --undo "$PR_NUMBER"`。
 
 ---
 

@@ -25,7 +25,8 @@ model: sonnet
 分割すると `OWNER` / `WORKFLOWS_REPO` / `REF` が失われる。
 
 > **`gh` の `--json` を使わないこと。** `gh repo view --json` / `gh pr view --json` は内部で GraphQL を叩くが、
-> **Claude Code セッションでは GraphQL が 403 でブロックされる**（実測確認済み）。REST (`gh api repos/...`) を使う。
+> **claude.ai/code のセッションでは GraphQL が 403 でブロックされる**（実測確認済み）。REST (`gh api repos/...`) を使う
+> （REST はローカル CLI でもそのまま動く）。
 > REST の `visibility` は小文字 (`private` / `public`)。GraphQL の大文字 (`PRIVATE`) と混同しないこと。
 
 参照先 (`WORKFLOWS_REPO`) は次の順で決める:
@@ -40,7 +41,7 @@ SHA 固定を要求するため、`@main` では **PR がマージできない**
 ```bash
 set -euo pipefail
 
-# gh の --json は GraphQL を使い Claude Code セッションではブロックされるため、REST (gh api) を使う。
+# gh の --json は GraphQL を使い claude.ai/code のセッションではブロックされるため、REST (gh api) を使う。
 # repos/{owner}/{repo} のプレースホルダは gh が git remote からローカルに解決する (GraphQL 不要)。
 ROOT=$(git rev-parse --show-toplevel) || { echo "NOT_A_GIT_REPO"; exit 0; }
 SELF=$(gh api 'repos/{owner}/{repo}' --jq '{owner:.owner.login, visibility}')
@@ -94,7 +95,7 @@ echo "OK ROOT=$ROOT WORKFLOWS_REPO=$WORKFLOWS_REPO REF=$REF WF_VIS=$WF_VIS"
 
 **ステップ 1 の変数は引き継がれない**（Bash ツールは呼び出し間でシェル変数を保持しない）。
 `WORKFLOWS_REPO` / `REF` / `ROOT` は、ステップ 1 が `OK` 行で出力した値を**リテラルで埋めて**実行する。
-`${CLAUDE_PLUGIN_ROOT}` は hooks.json 専用で Bash ツールでは展開されないため、導入先を実際に探す:
+同梱スクリプトのパスは、スキル読み込み時に Claude Code が置換するスキルディレクトリの変数から組み立てる:
 
 ```bash
 # ステップ 1 の OK 行の値をそのまま埋める
@@ -102,17 +103,18 @@ WORKFLOWS_REPO="{ステップ1のWORKFLOWS_REPO}"
 REF="{ステップ1のREF}"
 ROOT="{ステップ1のROOT}"
 
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
-if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
-  PLUGIN_ROOT=$(find "$HOME/.claude/plugins" "${CLAUDE_PROJECT_DIR:-.}/.claude/plugins" \
-    -maxdepth 6 -type d -path '*/indiehacker/*' -name rules 2>/dev/null | head -1)
-  PLUGIN_ROOT="${PLUGIN_ROOT%/rules}"
+# 右辺の表記はスキル読み込み時に Claude Code がこのスキルの実パスへ置換する（`:-` などの修飾を付けると置換されない）。
+# 置換されなかった場合だけキャッシュを探す。旧バージョン（本スキルを持たない版を含む）が残っていることがあるので、
+# rules ではなくスクリプト自体を探し、最新版を選ぶ
+INSTALL_SH="${CLAUDE_SKILL_DIR}/scripts/install.sh"
+if [ ! -f "$INSTALL_SH" ]; then
+  INSTALL_SH=$(find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache" -mindepth 7 -maxdepth 7 -type f \
+    -path '*/indiehacker/*/skills/install-review-workflow/scripts/install.sh' 2>/dev/null | sort -V | tail -1)
 fi
-if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
+if [ ! -f "${INSTALL_SH:-/nonexistent}" ]; then
   echo "PLUGIN_ROOT_NOT_FOUND"
 else
-  bash "$PLUGIN_ROOT/skills/install-review-workflow/scripts/install.sh" \
-    "$WORKFLOWS_REPO" "$REF" "$ROOT"
+  bash "$INSTALL_SH" "$WORKFLOWS_REPO" "$REF" "$ROOT"
 fi
 ```
 
