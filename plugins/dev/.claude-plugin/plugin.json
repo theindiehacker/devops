@@ -1,7 +1,7 @@
 {
   "name": "dev",
   "displayName": "Development",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "全社共通の開発ワークフロープラグイン",
   "repository": "https://github.com/theindiehacker/claude-plugins",
   "keywords": ["ddd", "workflow", "github", "hooks", "rules"],
