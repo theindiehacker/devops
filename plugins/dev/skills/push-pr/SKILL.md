@@ -57,7 +57,7 @@ model: sonnet
 PR 作成・更新は「実装が一通り完了したタイミング」と等価なので、ここで品質ゲートを通す。
 
 **セキュリティレビューは CI に委譲する（ローカルでは実行しない）**: PR に `/security-review` とコメントすると
-CI（`/indiehacker:setup-github-workflows` が導入する caller ワークフロー）が
+CI（`/dev:setup-github-workflows` が導入する caller ワークフロー）が
 claude-opus-5・フレッシュコンテキストで `/security-review` を実行する。
 ローカルで実行しないのは、(1) 長いセッション履歴ごと課金される、(2) 本スキルの実行モデル（frontmatter の
 `model`）でセキュリティ判断を行うことになる、の 2 点を避けるため。
@@ -77,7 +77,7 @@ claude-opus-5・フレッシュコンテキストで `/security-review` を実�
 CI の指摘（該当行へのインラインコメントとして投稿される）への対応はステップ 11 のレビュー対応ループで行い、
 対応後の再実行も `/security-review` コメントで依頼する。
 レビューワークフローが未導入のリポジトリではコメントしても起動しないので、
-その場合は `/indiehacker:setup-github-workflows` での導入を案内する。
+その場合は `/dev:setup-github-workflows` での導入を案内する。
 
 **ローカルで確認するプロジェクト規約 (バックエンド / テスト変更がある場合):**
 
@@ -90,7 +90,7 @@ CI の指摘（該当行へのインラインコメントとして投稿され�
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
 if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
   PLUGIN_ROOT=$(find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache" -mindepth 4 -maxdepth 4 \
-    -type d -path '*/indiehacker/*' -name rules 2>/dev/null | sort -V | tail -1)
+    -type d -path '*/dev/*' -name rules 2>/dev/null | sort -V | tail -1)
   PLUGIN_ROOT="${PLUGIN_ROOT%/rules}"
 fi
 # 解決に失敗したら黙って進まない（$PLUGIN_ROOT が空だと / 直下を指し、以降の Read が全て外れる）
@@ -130,7 +130,7 @@ fi
 
 取得したテンプレートに従って PR を作成する。**各セクションの埋め方（Todo Issue からのマッピング・🙆‍♂️ やったこと の書き方など）はテンプレートの HTML コメントに集約しているので、それを順守する**（SKILL.md に複製しない）。取得に失敗した場合 (ネットワーク断・`gh` 未認証など) のみ「💡 概要 / 🙆‍♂️ やったこと / 🙅‍♂️ やらないこと / ✔️ 動作確認」の構成で書く。
 
-対応する Todo Issue (`/indiehacker:refine` で作成、org 共通リポジトリ `<owner>/.github` の `.github/ISSUE_TEMPLATE/todo.md` 構造) があれば、コメントのマッピングに従って各セクションをそのまま転記する。無い PR (バグ修正・ドキュメントのみ等) は直接埋める。
+対応する Todo Issue (org 共通リポジトリ `<owner>/.github` の `.github/ISSUE_TEMPLATE/todo.md` 構造) があれば、コメントのマッピングに従って各セクションをそのまま転記する。無い PR (バグ修正・ドキュメントのみ等) は直接埋める。
 
 ### 4. チェックリスト
 
