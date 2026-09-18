@@ -16,3 +16,12 @@
 ```
 
 </details>
+
+## 🔄 Update
+マーケットプレイスを最新化してから、インストール済みプラグインを更新する。
+
+```
+/plugin marketplace update theindiehacker
+```
+
+以降、`/plugin` コマンドからプラグイン一覧・更新状況を確認できる。
