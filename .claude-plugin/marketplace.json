@@ -8,8 +8,8 @@
   },
   "plugins": [
     {
-      "name": "indiehacker",
-      "source": "./plugins/indiehacker",
+      "name": "dev",
+      "source": "./plugins/dev",
       "description": "全社共通の開発ワークフロー",
       "category": "workflow",
       "keywords": ["ddd", "workflow", "github", "hooks", "rules"]

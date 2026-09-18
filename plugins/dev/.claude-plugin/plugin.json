@@ -1,6 +1,6 @@
 {
-  "name": "indiehacker",
-  "displayName": "IndieHacker",
+  "name": "dev",
+  "displayName": "Development",
   "version": "0.2.0",
   "description": "全社共通の開発ワークフロープラグイン",
   "repository": "https://github.com/theindiehacker/claude-plugins",

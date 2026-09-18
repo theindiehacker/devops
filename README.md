@@ -6,5 +6,5 @@
 ⚠️ 事前に `gh auth login` で認証を完了していること
 ```
 /plugin marketplace add https://github.com/theindiehacker/claude-plugins.git
-/plugin install indiehacker@theindiehacker
+/plugin install dev@theindiehacker
 ```
