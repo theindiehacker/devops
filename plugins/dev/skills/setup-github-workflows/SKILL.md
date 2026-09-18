@@ -5,4 +5,4 @@ argument-hint: "[owner/repo]"
 model: sonnet
 ---
 
-https://github.com/{組織アカウント}/github-workflows を参照して、対象リポジトリに導入できる caller の github workflows を実装してください。
+https://github.com/{組織アカウント}/github-workflows (実際は、具体的な組織アカウント名を指定) を参照して、対象リポジトリに導入できる caller の github workflows を実装してください。
