@@ -91,7 +91,6 @@ jobs:
           # 設定ファイルは全ファイルの検出結果に影響するため、変更時は repo 全体をスキャン
           SCAN_ALL: ${{ steps.filter.outputs.config }}
           TARGETS: ${{ steps.filter.outputs.targets_files }}
-          # <org>/github-workflows（本リポジトリ）だけを参照するファイルの判定に使う
           OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
@@ -103,54 +102,37 @@ jobs:
             config_args=(--config .github/zizmor.yml)
           fi
 
-          # スキャン対象を列挙する（設定ファイル変更時は tracked な Actions 関連ファイルすべて）
-          targets=()
           if [ "${SCAN_ALL}" = "true" ]; then
-            while IFS= read -r t; do
-              targets+=("${t}")
-            done < <(git ls-files -- ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' \
-              ':(glob)**/action.yml' ':(glob)**/action.yaml')
+            mapfile -t targets < <(git ls-files -- ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' ':(glob)**/action.yml' ':(glob)**/action.yaml')
           else
-            while IFS= read -r t; do
-              if [ -n "${t}" ]; then targets+=("${t}"); fi
-            done < <(jq -r '.[]' <<< "${TARGETS}")
+            mapfile -t targets < <(jq -r '.[]' <<< "${TARGETS}")
           fi
 
-          # 本リポジトリ（<org>/github-workflows）の reusable workflow / action だけを参照するファイル（Claude レビューの
-          # caller 等）は online 監査を省く。本リポジトリが private の場合、対象リポジトリの github.token では本リポジトリの
-          # タグ一覧を取得できず、impostor-commit が findings ではなく fatal で終了するため（#21）。fork 禁止の private
-          # リポジトリには fork ネットワークが無く impostor commit が成立しないので、この参照で失う検知は実質無い。
-          # 判定はファイル名ではなく内容で行う: repository 形式の uses:（./ docker:// $/ 以外）がすべて本リポジトリ宛ての
-          # ファイルだけを対象にし、他の action を 1 つでも参照するファイルは従来どおり online で監査する
-          # （免除されたファイルには online 監査で隠せる参照が無いため、抜け道にならない）。
-          # uses: の値が次行に分かれている等で読み取れない場合は online 側に寄せる（fatal で気付ける安全側）。
-          #
-          # TODO: zizmor 本体に「特定リポジトリの参照だけ impostor-commit を除外する」設定
-          #       （rules.impostor-commit.config.ignore: [<org>/github-workflows] 案）が実装されたら、
-          #       この振り分けを削除して .github/zizmor.yml の設定に乗り換える。
-          #       要望 Issue: https://github.com/zizmorcore/zizmor/issues/1350
+          # 本リポジトリ（<org>/github-workflows）だけを参照するファイル（Claude レビューの caller 等）は online 監査を省く。
+          # 本リポジトリが private だと対象リポジトリの github.token では参照先を読めず、impostor-commit が fatal で終了するため（#21）。
+          # fork 禁止の private リポジトリには impostor commit が成立しないので失う検知は実質無く、
+          # 他の action を 1 つでも参照するファイルは従来どおり online で監査するため、免除を抜け道にはできない。
+          # TODO: zizmor に特定リポジトリを除外する設定が入ったら .github/zizmor.yml に乗り換える
+          #       https://github.com/zizmorcore/zizmor/issues/1350
           online=()
           offline=()
           for t in "${targets[@]}"; do
-            refs=$(sed -nE 's/^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*//p' "${t}" \
-              | sed -E 's/[[:space:]]+#.*$//; s/^["'"'"']//; s/["'"'"']$//' \
-              | grep -vE '^(\./|docker://|\$/)' || true)
+            # uses: の値（引用符・末尾コメントを除く）のうち、ローカル / docker 以外の repository 参照
+            refs=$(sed -nE 's/^\s*-?\s*uses:\s*["'"'"']?([^"'"'"'# ]+).*/\1/p' "${t}" | grep -vE '^(\./|docker://|\$/)' || true)
             if [ -n "${refs}" ] && ! grep -qvE "^${OWNER}/github-workflows/" <<< "${refs}"; then
               offline+=("${t}")
-              echo "::notice file=${t}::${OWNER}/github-workflows のみを参照するため online 監査（impostor-commit 等）を省略しました（docs/SETUP.md 4. を参照）"
+              echo "::notice file=${t}::${OWNER}/github-workflows のみを参照するため online 監査を省略しました（docs/SETUP.md 4.）"
             else
               online+=("${t}")
             fi
           done
 
-          # --format github: 検出箇所を PR に annotation 表示する。2 回の実行のうち大きい exit code を返す
+          # --format github: 検出箇所を PR に annotation 表示する
           rc=0
           if [ "${#online[@]}" -gt 0 ]; then
-            zizmor --no-progress --format github --min-severity high "${config_args[@]}" "${online[@]}" || rc=$?
+            zizmor --no-progress --format github --min-severity high "${config_args[@]}" "${online[@]}" || rc=1
           fi
           if [ "${#offline[@]}" -gt 0 ]; then
-            r=0
-            zizmor --no-progress --no-online-audits --format github --min-severity high "${config_args[@]}" "${offline[@]}" || r=$?
-            if [ "${r}" -gt "${rc}" ]; then rc="${r}"; fi
+            zizmor --no-progress --no-online-audits --format github --min-severity high "${config_args[@]}" "${offline[@]}" || rc=1
           fi
           exit "${rc}"
