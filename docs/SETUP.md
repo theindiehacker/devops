@@ -441,7 +441,7 @@ renovatebot/github-action@*
 
 必須ワークフロー `zizmor.yml` は対象リポジトリの `GITHUB_TOKEN` で動くため、private な本リポジトリのタグ / ブランチ一覧を取得できない。
 このため Claude の reusable workflow(「4.」)を呼ぶ caller ワークフローがあると、zizmor の `impostor-commit` 監査が fatal で失敗しマージできなくなる([#21](https://github.com/theindiehacker/github-workflows/issues/21))。
-本リポジトリのみ・`contents: read` に限定した installation token を `actions/create-github-app-token` で発行し、zizmor の `GH_TOKEN` に渡すことで回避する。
+本リポジトリと対象リポジトリ自身のみ・`contents: read` に限定した installation token を `actions/create-github-app-token` で発行し、zizmor の `GH_TOKEN` に渡すことで回避する(対象リポジトリ自身は従来の `GITHUB_TOKEN` で読めていた範囲。自リポジトリを full path で参照するワークフローの監査に必要)。
 
 1. Organization → Settings → Developer settings → **GitHub Apps** → **New GitHub App** で App を作成
 
@@ -454,7 +454,7 @@ renovatebot/github-action@*
 | Where can this GitHub App be installed? | `Only on this account` |
 
 2. 作成後の App 設定ページで **Client ID** を控え、**Private keys** → **Generate a private key** で `.pem` をダウンロード
-3. **Install App** → org を選び、Repository access は `Only select repositories` → `github-workflows`
+3. **Install App** → org を選び、Repository access は `All repositories`(対象リポジトリ自身を含めるため。新規リポジトリも自動で対象)。トークンは実行ごとに `github-workflows` と対象リポジトリの 2 つに絞って発行される
 4. Organization → Settings → Secrets and variables → Actions に登録する
 
 | 種別 | Name | 値 | Repository access |
@@ -467,11 +467,12 @@ renovatebot/github-action@*
 - Dependabot 起動の PR には Actions secrets ではなく **Dependabot secrets** が渡される(`vars` は参照可)。Dependabot を使うリポジトリがある場合は、Organization → Settings → Secrets and variables → **Dependabot** にも同名の `ZIZMOR_APP_PRIVATE_KEY` を登録する。未登録だと Dependabot の actions 更新 PR が常にフォールバックし、caller ワークフローを持つリポジトリではマージできない
 - `repositories` / `permission-contents` を限定しているため、ghalint の `github_app_should_limit_repositories` / `github_app_should_limit_permissions` を満たす
 
-**残余リスク** : 秘密鍵は org の全ワークフローから読めるため、鍵を持てば App に設定された権限・インストール先の全範囲でトークンを発行できる。`zizmor.yml` の `repositories` / `permission-contents` は要求の絞り込みに過ぎず、実際の上限は App 側の設定で決まる。
+- トークンで読めるのは `github-workflows` と対象リポジトリ自身のみ。それ以外の private リポジトリの action / reusable workflow を参照するワークフローでは、`impostor-commit` は従来の `GITHUB_TOKEN` と同様に fatal になる(対応が必要なら `zizmor.yml` の `repositories` の計算に加える。`.github/workflows/**` の変更として security チームの承認対象)
+
+**残余リスク** : 秘密鍵は org の全ワークフローから読め、App は全リポジトリにインストールされているため、鍵を持ち出されると Actions の外から(ローテーションまで)org 内の全リポジトリの contents を読むトークンを発行できる。`zizmor.yml` の `repositories` / `permission-contents` は要求の絞り込みに過ぎず、実際の上限は App 側の設定で決まる。Base permissions(「0.」)が `Read` の org ではメンバーの既存権限と同等だが、`No permission` の org では「write 権限を持つ 1 リポジトリ」から他リポジトリの読み取りに広がる。
 
 - App の権限は今後も `Contents: Read-only` 以外を付けない(付けた瞬間、全リポジトリに露出している鍵の価値が上がる)
-- 対象リポジトリが本リポジトリ以外の private リポジトリの action / reusable workflow を参照する場合は、その repo を 3. のインストール対象と `zizmor.yml` の `repositories:` に追加する。露出範囲が広がるため、追加時は security チームが判断する
-- 鍵のローテーション: App 設定ページ → **Private keys** → **Generate a private key** で新しい鍵を生成 → org シークレット(Dependabot secret も登録していればそれも)を新しい鍵で更新 → 動作確認後に旧鍵を **Delete**。切り替えの間に発行が失敗しても、上記のフォールバックで必須チェックは止まらない
+- 鍵のローテーション: App 設定ページ → **Private keys** → **Generate a private key** で新しい鍵を生成 → org シークレット(Dependabot secret も登録していればそれも)を新しい鍵で更新 → 動作確認後に旧鍵を **Delete**。切り替えの間に発行が失敗しても、上記のフォールバックで必須チェックは止まらない。鍵の漏えいが疑われる場合も同じ手順で即時に無効化できる
 
 </details>
 

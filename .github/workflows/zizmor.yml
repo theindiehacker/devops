@@ -63,24 +63,34 @@ jobs:
             exit 1
           fi
 
-      - name: "App 認証情報の有無を判定"
+      - name: "App トークンの要否と対象リポジトリを決定"
         # 必須ワークフローは対象リポジトリの文脈で動くため、org の変数 / シークレットは対象リポジトリ側で解決される。
         # fork / Dependabot の PR ではシークレットが渡されないため、有無を見てトークン発行を skip する
-        # （secrets コンテキストは step の if で参照できないため、step の env 経由で真偽値にする）
+        # （secrets コンテキストは step の if で参照できないため、step の env 経由で真偽値にする）。
+        # トークンの対象は github-workflows と対象リポジトリ自身。github.token で読めていた自リポジトリを含めないと、
+        # 自リポジトリを full path（<org>/<repo>/...@<sha>）で参照するワークフローの impostor-commit 監査が退行する
         if: steps.filter.outputs.config == 'true' || steps.filter.outputs.targets == 'true'
         id: app
         shell: bash
         env:
           HAS_APP: ${{ vars.ZIZMOR_APP_CLIENT_ID != '' && secrets.ZIZMOR_APP_PRIVATE_KEY != '' }}
+          REPO_NAME: ${{ github.event.repository.name }}
         run: |
           set -euo pipefail
-          echo "available=${HAS_APP}" >> "$GITHUB_OUTPUT"
+          repositories="github-workflows"
+          if [ "${REPO_NAME}" != "github-workflows" ]; then
+            repositories="${repositories},${REPO_NAME}"
+          fi
+          {
+            echo "available=${HAS_APP}"
+            echo "repositories=${repositories}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: "github-workflows 参照用トークンを発行"
         # 対象リポジトリの github.token は自リポジトリにしか届かず、private な本リポジトリのタグ / ブランチ一覧を取得できない。
         # zizmor の impostor-commit 監査は参照先の一覧取得に失敗すると fatal で終了する
         # （findings ではなく監査内部の例外のため .github/zizmor.yml の ignore では抑制できない: #21）。
-        # 本リポジトリのみ・contents: read に限定した installation token を発行して GH_TOKEN に渡す。
+        # 本リポジトリと対象リポジトリ自身のみ・contents: read に限定した installation token を発行して GH_TOKEN に渡す。
         # 発行に失敗（鍵ローテーション漏れ・App のアンインストール・Client ID 誤りなど）しても job は止めず
         # github.token にフォールバックする。必須チェックのため、ここで失敗させると org 全体のワークフロー変更 PR が止まる
         if: steps.app.outputs.available == 'true'
@@ -90,8 +100,8 @@ jobs:
         with:
           client-id: ${{ vars.ZIZMOR_APP_CLIENT_ID }}
           private-key: ${{ secrets.ZIZMOR_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: github-workflows
+          # owner は既定値（対象リポジトリの owner）
+          repositories: ${{ steps.app.outputs.repositories }}
           permission-contents: read
 
       - name: "Install zizmor"
