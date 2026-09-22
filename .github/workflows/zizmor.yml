@@ -68,12 +68,12 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-release-attachments depName=zizmorcore/zizmor
-          VERSION: 1.27.0
+          VERSION: v1.27.0
           SHA256: 277f2bd8fd37cf60c42ab7afca6faa884e65440fa31e02b44bdaae60f62a358f
         run: |
           set -euo pipefail
           ARCHIVE="zizmor-x86_64-unknown-linux-gnu.tar.gz"
-          curl -sSfL -o "$ARCHIVE" "https://github.com/zizmorcore/zizmor/releases/download/v${VERSION}/${ARCHIVE}"
+          curl -sSfL -o "$ARCHIVE" "https://github.com/zizmorcore/zizmor/releases/download/${VERSION}/${ARCHIVE}"
 
           # SHA-256 検証（改ざん・破損を検知）
           echo "${SHA256}  ${ARCHIVE}" | sha256sum -c -
