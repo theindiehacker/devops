@@ -1,6 +1,7 @@
 name: "🛡️ zizmor"
 
-# GitHub Actions のワークフロー / action 定義を zizmor で静的解析し、severity HIGH 以上の検出でマージをブロックする。
+# GitHub Actions のワークフロー / action 定義（と zizmor が収集する dependabot.yml / pre-commit 設定）を zizmor で静的解析し、
+# severity HIGH 以上の検出でマージをブロックする。
 #
 # ⚠️ 必須ワークフローは on: のフィルタ（paths / branches / types 等）が無視され全 PR で起動されるため、
 #    「Actions 関連ファイルが変更されたか」の判定は本ワークフロー内で行う。
@@ -41,6 +42,12 @@ jobs:
               - added|modified|copied: "action.yaml"
               - added|modified|copied: "**/action.yml"
               - added|modified|copied: "**/action.yaml"
+              - added|modified|copied: ".github/dependabot.yml"
+              - added|modified|copied: ".github/dependabot.yaml"
+              - added|modified|copied: ".pre-commit-config.yaml"
+              - added|modified|copied: ".pre-commit-config.yml"
+              - added|modified|copied: ".pre-commit-hooks.yaml"
+              - added|modified|copied: ".pre-commit-hooks.yml"
 
       - name: "Checkout"
         if: steps.filter.outputs.config == 'true' || steps.filter.outputs.targets == 'true'
@@ -103,25 +110,33 @@ jobs:
           fi
 
           if [ "${SCAN_ALL}" = "true" ]; then
-            mapfile -t targets < <(git ls-files -- ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' ':(glob)**/action.yml' ':(glob)**/action.yaml')
+            # `zizmor .` が収集する種類（workflow / action / dependabot / pre-commit）を tracked ファイルから列挙する
+            mapfile -t targets < <(git ls-files -- \
+              ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' ':(glob)**/action.yml' ':(glob)**/action.yaml' \
+              ':(glob).github/dependabot.yml' ':(glob).github/dependabot.yaml' \
+              ':(glob).pre-commit-config.yaml' ':(glob).pre-commit-config.yml' ':(glob).pre-commit-hooks.yaml' ':(glob).pre-commit-hooks.yml')
           else
             mapfile -t targets < <(jq -r '.[]' <<< "${TARGETS}")
           fi
 
           # 本リポジトリ（<org>/github-workflows）だけを参照するファイル（Claude レビューの caller 等）は online 監査を省く。
           # 本リポジトリが private だと対象リポジトリの github.token では参照先を読めず、impostor-commit が fatal で終了するため（#21）。
-          # fork 禁止の private リポジトリには impostor commit が成立しないので失う検知は実質無く、
+          # fork 禁止の private リポジトリには fork 由来の impostor commit が成立せず、ブランチ / タグに属さない SHA の検知は
+          # private 化後は github.token ではどのみち監査できないため、この省略で新たに失う検知は無い。
           # 他の action を 1 つでも参照するファイルは従来どおり online で監査するため、免除を抜け道にはできない。
           # TODO: zizmor に特定リポジトリを除外する設定が入ったら .github/zizmor.yml に乗り換える
           #       https://github.com/zizmorcore/zizmor/issues/1350
           online=()
           offline=()
           for t in "${targets[@]}"; do
-            # uses: の値（引用符・末尾コメントを除く）のうち、ローカル / docker 以外の repository 参照
-            refs=$(sed -nE 's/^\s*-?\s*uses:\s*["'"'"']?([^"'"'"'# ]+).*/\1/p' "${t}" | grep -vE '^(\./|docker://|\$/)' || true)
-            if [ -n "${refs}" ] && ! grep -qvE "^${OWNER}/github-workflows/" <<< "${refs}"; then
+            # YAML を解析して uses: の値を再帰的に集める（flow 形式・引用符付きキー・アンカーも対象。zizmor と同じ見え方にする）。
+            # 解析に失敗したファイルは refs が空になり online 側に倒れる（fatal で気付ける安全側）
+            refs=$(yq -r '[explode(.) | .. | select(tag == "!!map" and has("uses")) | .uses] | .[]' "${t}" 2>/dev/null \
+              | grep -vE '^(\./|docker://|\$/)' || true)
+            # owner / repo 名は大文字小文字を区別しない
+            if [ -n "${refs}" ] && ! grep -qivE "^${OWNER}/github-workflows/" <<< "${refs}"; then
               offline+=("${t}")
-              echo "::notice file=${t}::${OWNER}/github-workflows のみを参照するため online 監査を省略しました（docs/SETUP.md 4.）"
+              echo "::notice file=${t}::${OWNER}/github-workflows のみを参照するため online 監査を省略しました（理由は github-workflows の .github/workflows/zizmor.yml を参照）"
             else
               online+=("${t}")
             fi
