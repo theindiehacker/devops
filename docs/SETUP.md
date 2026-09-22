@@ -462,10 +462,16 @@ renovatebot/github-action@*
 | Variable | `ZIZMOR_APP_CLIENT_ID` | 2. の Client ID | `All repositories` |
 | Secret | `ZIZMOR_APP_PRIVATE_KEY` | 2. の `.pem` の内容 | `All repositories` |
 
-- 必須ワークフローは対象リポジトリ側で変数 / シークレットを解決するため、Repository access は `All repositories` にする。App の権限は本リポジトリの `contents: read` のみなので、全リポジトリから参照できても影響は限定的
-- 変数 / シークレットを参照できない場合(未登録、fork / Dependabot の PR)は `github.token` にフォールバックして warning を出す。private な参照先があると `impostor-commit` は fatal になる(本リポジトリが public なら問題なく通る)
-- 対象リポジトリが本リポジトリ以外の private リポジトリの action / reusable workflow を参照する場合は、その repo を 3. のインストール対象と `zizmor.yml` の `repositories:` に追加する
+- 必須ワークフローは対象リポジトリ側で変数 / シークレットを解決するため、Repository access は `All repositories` にする(caller ワークフローを持つリポジトリだけに絞ることもできるが、導入のたびに追加が必要になる)
+- 変数 / シークレットを参照できない場合(未登録、fork / Dependabot の PR)と、発行に失敗した場合(鍵ローテーション漏れ・App のアンインストール・Client ID 誤りなど)は `github.token` にフォールバックして warning を出す。private な参照先があると `impostor-commit` は fatal になる(本リポジトリが public なら問題なく通る)。org 全体の必須チェックを止めないため、発行失敗で job は失敗させない
+- Dependabot 起動の PR には Actions secrets ではなく **Dependabot secrets** が渡される(`vars` は参照可)。Dependabot を使うリポジトリがある場合は、Organization → Settings → Secrets and variables → **Dependabot** にも同名の `ZIZMOR_APP_PRIVATE_KEY` を登録する。未登録だと Dependabot の actions 更新 PR が常にフォールバックし、caller ワークフローを持つリポジトリではマージできない
 - `repositories` / `permission-contents` を限定しているため、ghalint の `github_app_should_limit_repositories` / `github_app_should_limit_permissions` を満たす
+
+**残余リスク** : 秘密鍵は org の全ワークフローから読めるため、鍵を持てば App に設定された権限・インストール先の全範囲でトークンを発行できる。`zizmor.yml` の `repositories` / `permission-contents` は要求の絞り込みに過ぎず、実際の上限は App 側の設定で決まる。
+
+- App の権限は今後も `Contents: Read-only` 以外を付けない(付けた瞬間、全リポジトリに露出している鍵の価値が上がる)
+- 対象リポジトリが本リポジトリ以外の private リポジトリの action / reusable workflow を参照する場合は、その repo を 3. のインストール対象と `zizmor.yml` の `repositories:` に追加する。露出範囲が広がるため、追加時は security チームが判断する
+- 鍵のローテーション: App 設定ページ → **Private keys** → **Generate a private key** で新しい鍵を生成 → org シークレット(Dependabot secret も登録していればそれも)を新しい鍵で更新 → 動作確認後に旧鍵を **Delete**。切り替えの間に発行が失敗しても、上記のフォールバックで必須チェックは止まらない
 
 </details>
 
