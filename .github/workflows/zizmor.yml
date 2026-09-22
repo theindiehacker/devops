@@ -63,6 +63,34 @@ jobs:
             exit 1
           fi
 
+      - name: "App 認証情報の有無を判定"
+        # 必須ワークフローは対象リポジトリの文脈で動くため、org の変数 / シークレットは対象リポジトリ側で解決される。
+        # fork / Dependabot の PR ではシークレットが渡されないため、有無を見てトークン発行を skip する
+        # （secrets コンテキストは step の if で参照できないため、step の env 経由で真偽値にする）
+        if: steps.filter.outputs.config == 'true' || steps.filter.outputs.targets == 'true'
+        id: app
+        shell: bash
+        env:
+          HAS_APP: ${{ vars.ZIZMOR_APP_CLIENT_ID != '' && secrets.ZIZMOR_APP_PRIVATE_KEY != '' }}
+        run: |
+          set -euo pipefail
+          echo "available=${HAS_APP}" >> "$GITHUB_OUTPUT"
+
+      - name: "github-workflows 参照用トークンを発行"
+        # 対象リポジトリの github.token は自リポジトリにしか届かず、private な本リポジトリのタグ / ブランチ一覧を取得できない。
+        # zizmor の impostor-commit 監査は参照先の一覧取得に失敗すると fatal で終了する
+        # （findings ではなく監査内部の例外のため .github/zizmor.yml の ignore では抑制できない: #21）。
+        # 本リポジトリのみ・contents: read に限定した installation token を発行して GH_TOKEN に渡す
+        if: steps.app.outputs.available == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.ZIZMOR_APP_CLIENT_ID }}
+          private-key: ${{ secrets.ZIZMOR_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: github-workflows
+          permission-contents: read
+
       - name: "Install zizmor"
         if: steps.filter.outputs.config == 'true' || steps.filter.outputs.targets == 'true'
         shell: bash
@@ -86,13 +114,19 @@ jobs:
         if: steps.filter.outputs.config == 'true' || steps.filter.outputs.targets == 'true'
         shell: bash
         env:
-          # GH_TOKEN があると online audit（impostor-commit / known-vulnerable-actions 等）も有効になる
-          GH_TOKEN: ${{ github.token }}
+          # GH_TOKEN があると online audit（impostor-commit / known-vulnerable-actions 等）も有効になる。
+          # App トークンを発行できなかった場合（App 未設定・fork / Dependabot の PR）は github.token にフォールバックする
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          APP_TOKEN_AVAILABLE: ${{ steps.app.outputs.available }}
           # 設定ファイルは全ファイルの検出結果に影響するため、変更時は repo 全体をスキャン
           SCAN_ALL: ${{ steps.filter.outputs.config }}
           TARGETS: ${{ steps.filter.outputs.targets_files }}
         run: |
           set -euo pipefail
+          if [ "${APP_TOKEN_AVAILABLE}" != "true" ]; then
+            echo "::warning::App トークンを取得できなかったため github.token で実行します。private リポジトリ（github-workflows 等）を参照するワークフローがあると impostor-commit 監査が fatal になります（docs/SETUP.md 3. を参照）"
+          fi
+
           # 設定ファイルの自動探索はリポジトリ直下や入力ファイルの祖先ディレクトリの zizmor.yml / zizmor.yaml
           # にも及び、承認必須（2.5）の対象外パスから検出を抑制できてしまうため、
           # 承認必須の .github/zizmor.yml に固定する（未作成なら設定なしで実行する）

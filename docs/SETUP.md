@@ -421,7 +421,7 @@ renovatebot/github-action@*
 ※ 各リポジトリが新しい外部 action を使う場合はこのリストへの追加が必要(SHA ピン留めは各ワークフロー側で行う)。<br/>
 ※ `oven-sh/setup-bun` は `anthropics/claude-code-action` が内部で使用する action のため併せて許可する(「4.」)。<br/>
 ※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `python.yml` が使用する。<br/>
-※ `actions/create-github-app-token` は「Allow actions created by GitHub」で許可済みのため個別登録は不要。
+※ `actions/create-github-app-token`(下記「zizmor 用 GitHub App」で `zizmor.yml` が使用)は「Allow actions created by GitHub」で許可済みのため個別登録は不要。
 
 </details>
 
@@ -434,6 +434,38 @@ renovatebot/github-action@*
 
 - `permissions:` を明示しているワークフロー(本リポジトリのものを含む)には影響しない
 - 「create and approve pull requests」を無効化することで、`GITHUB_TOKEN` による自己承認で 2.2 / 2.5 / 2.6 の承認必須化が迂回されるのを防ぐ
+
+</details>
+
+<details><summary><b>zizmor 用 GitHub App(private な本リポジトリを対象リポジトリから参照するためのトークン)</b></summary>
+
+必須ワークフロー `zizmor.yml` は対象リポジトリの `GITHUB_TOKEN` で動くため、private な本リポジトリのタグ / ブランチ一覧を取得できない。
+このため Claude の reusable workflow(「4.」)を呼ぶ caller ワークフローがあると、zizmor の `impostor-commit` 監査が fatal で失敗しマージできなくなる([#21](https://github.com/theindiehacker/github-workflows/issues/21))。
+本リポジトリのみ・`contents: read` に限定した installation token を `actions/create-github-app-token` で発行し、zizmor の `GH_TOKEN` に渡すことで回避する。
+
+1. Organization → Settings → Developer settings → **GitHub Apps** → **New GitHub App** で App を作成
+
+| 設定項目 | 値 |
+|:--------|:--|
+| GitHub App name | `<org>-zizmor`(GitHub 全体で一意なら任意) |
+| Homepage URL | 本リポジトリの URL |
+| Webhook → Active | ❌(チェックを外す) |
+| Repository permissions → Contents | `Read-only`(他はすべて `No access`) |
+| Where can this GitHub App be installed? | `Only on this account` |
+
+2. 作成後の App 設定ページで **Client ID** を控え、**Private keys** → **Generate a private key** で `.pem` をダウンロード
+3. **Install App** → org を選び、Repository access は `Only select repositories` → `github-workflows`
+4. Organization → Settings → Secrets and variables → Actions に登録する
+
+| 種別 | Name | 値 | Repository access |
+|:----|:-----|:--|:--|
+| Variable | `ZIZMOR_APP_CLIENT_ID` | 2. の Client ID | `All repositories` |
+| Secret | `ZIZMOR_APP_PRIVATE_KEY` | 2. の `.pem` の内容 | `All repositories` |
+
+- 必須ワークフローは対象リポジトリ側で変数 / シークレットを解決するため、Repository access は `All repositories` にする。App の権限は本リポジトリの `contents: read` のみなので、全リポジトリから参照できても影響は限定的
+- 変数 / シークレットを参照できない場合(未登録、fork / Dependabot の PR)は `github.token` にフォールバックして warning を出す。private な参照先があると `impostor-commit` は fatal になる(本リポジトリが public なら問題なく通る)
+- 対象リポジトリが本リポジトリ以外の private リポジトリの action / reusable workflow を参照する場合は、その repo を 3. のインストール対象と `zizmor.yml` の `repositories:` に追加する
+- `repositories` / `permission-contents` を限定しているため、ghalint の `github_app_should_limit_repositories` / `github_app_should_limit_permissions` を満たす
 
 </details>
 
