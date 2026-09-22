@@ -25,6 +25,13 @@ jobs:
     name: "GitHub Actions 設定をスキャン"
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # zizmor がスキャンする種類（`zizmor .` の収集対象と同じ: workflow / action / dependabot / pre-commit）の git pathspec。
+      # インライン ignore 禁止と全体スキャンの列挙で共用する（paths-filter の targets とも揃えること）
+      ZIZMOR_PATHSPECS: >-
+        :(glob).github/workflows/*.yml :(glob).github/workflows/*.yaml :(glob)**/action.yml :(glob)**/action.yaml
+        :(glob).github/dependabot.yml :(glob).github/dependabot.yaml
+        :(glob).pre-commit-config.yaml :(glob).pre-commit-config.yml :(glob).pre-commit-hooks.yaml :(glob).pre-commit-hooks.yml
     steps:
       - name: "スキャン対象を判定"
         id: filter
@@ -58,14 +65,13 @@ jobs:
       - name: "インライン ignore コメントの禁止"
         # zizmor の --no-ignores は承認必須の .github/zizmor.yml による抑制まで無効化してしまうため、
         # インラインコメントのトークンの存在自体を禁止する（抑制は .github/zizmor.yml に限定する）。
-        # 検査対象は zizmor がスキャンし得る Actions 関連ファイルのみ（ドキュメント等の誤検知を避ける）
+        # 検査対象は zizmor がスキャンし得るファイルのみ（ドキュメント等の誤検知を避ける）
         if: steps.filter.outputs.config == 'true' || steps.filter.outputs.targets == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          if git grep -InE 'zizmor:[[:space:]]*ignore' -- \
-            ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' \
-            ':(glob)**/action.yml' ':(glob)**/action.yaml'; then
+          read -ra pathspecs <<< "${ZIZMOR_PATHSPECS}"
+          if git grep -InE 'zizmor:[[:space:]]*ignore' -- "${pathspecs[@]}"; then
             echo "::error::インラインの ignore コメントは使用できません。.github/zizmor.yml で抑制してください（変更にはセキュリティチームの承認が必要）"
             exit 1
           fi
@@ -109,16 +115,16 @@ jobs:
             config_args=(--config .github/zizmor.yml)
           fi
 
+          # 対象の列挙はファイル経由にし、jq / git の失敗を set -e で job の失敗にする（プロセス置換の中の失敗は set -e の対象外）
+          list="${RUNNER_TEMP}/zizmor-targets.txt"
           if [ "${SCAN_ALL}" = "true" ]; then
-            # `zizmor .` が収集する種類（workflow / action / dependabot / pre-commit）を tracked ファイルから列挙する
-            # -z: 非 ASCII パスが core.quotePath でクォートされ、zizmor がリモート入力と誤解して fatal になるのを防ぐ
-            mapfile -d '' -t targets < <(git ls-files -z -- \
-              ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' ':(glob)**/action.yml' ':(glob)**/action.yaml' \
-              ':(glob).github/dependabot.yml' ':(glob).github/dependabot.yaml' \
-              ':(glob).pre-commit-config.yaml' ':(glob).pre-commit-config.yml' ':(glob).pre-commit-hooks.yaml' ':(glob).pre-commit-hooks.yml')
+            # core.quotePath=false: 非 ASCII パスがクォートされて zizmor にリモート入力と誤解されるのを防ぐ
+            read -ra pathspecs <<< "${ZIZMOR_PATHSPECS}"
+            git -c core.quotePath=false ls-files -- "${pathspecs[@]}" > "${list}"
           else
-            mapfile -t targets < <(jq -r '.[]' <<< "${TARGETS}")
+            jq -r '.[]' <<< "${TARGETS}" > "${list}"
           fi
+          mapfile -t targets < "${list}"
 
           # 本リポジトリ（<org>/github-workflows）が private だと、対象リポジトリの github.token では参照先を読めず、
           # 本リポジトリの reusable workflow を参照するファイル（Claude レビューの caller 等）の impostor-commit が
@@ -149,12 +155,9 @@ jobs:
             fi
           done
 
-          # --format github: 検出箇所を PR に annotation 表示する
+          # --format github: 検出箇所を PR に annotation 表示する。exit code は zizmor のもの（1: エラー / 14: 検出 等）を保持する
           rc=0
-          if [ "${#online[@]}" -gt 0 ]; then
-            zizmor --no-progress --format github --min-severity high "${config_args[@]}" "${online[@]}" || rc=1
-          fi
-          if [ "${#offline[@]}" -gt 0 ]; then
-            zizmor --no-progress --no-online-audits --format github --min-severity high "${config_args[@]}" "${offline[@]}" || rc=1
-          fi
+          run_zizmor() { zizmor --no-progress --format github --min-severity high "${config_args[@]}" "$@" || rc=$?; }
+          if [ "${#online[@]}" -gt 0 ]; then run_zizmor "${online[@]}"; fi
+          if [ "${#offline[@]}" -gt 0 ]; then run_zizmor --no-online-audits "${offline[@]}"; fi
           exit "${rc}"
