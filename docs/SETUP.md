@@ -421,7 +421,7 @@ renovatebot/github-action@*
 ※ 各リポジトリが新しい外部 action を使う場合はこのリストへの追加が必要(SHA ピン留めは各ワークフロー側で行う)。<br/>
 ※ `oven-sh/setup-bun` は `anthropics/claude-code-action` が内部で使用する action のため併せて許可する(「4.」)。<br/>
 ※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `python.yml` が使用する。<br/>
-※ `actions/create-github-app-token`(下記「zizmor 用 GitHub App」で `zizmor.yml` が使用)は「Allow actions created by GitHub」で許可済みのため個別登録は不要。
+※ `actions/create-github-app-token` は「Allow actions created by GitHub」で許可済みのため個別登録は不要。
 
 </details>
 
@@ -434,45 +434,6 @@ renovatebot/github-action@*
 
 - `permissions:` を明示しているワークフロー(本リポジトリのものを含む)には影響しない
 - 「create and approve pull requests」を無効化することで、`GITHUB_TOKEN` による自己承認で 2.2 / 2.5 / 2.6 の承認必須化が迂回されるのを防ぐ
-
-</details>
-
-<details><summary><b>zizmor 用 GitHub App(private な本リポジトリを対象リポジトリから参照するためのトークン)</b></summary>
-
-必須ワークフロー `zizmor.yml` は対象リポジトリの `GITHUB_TOKEN` で動くため、private な本リポジトリのタグ / ブランチ一覧を取得できない。
-このため Claude の reusable workflow(「4.」)を呼ぶ caller ワークフローがあると、zizmor の `impostor-commit` 監査が fatal で失敗しマージできなくなる([#21](https://github.com/theindiehacker/github-workflows/issues/21))。
-本リポジトリと対象リポジトリ自身のみ・`contents: read` に限定した installation token を `actions/create-github-app-token` で発行し、zizmor の `GH_TOKEN` に渡すことで回避する(対象リポジトリ自身は従来の `GITHUB_TOKEN` で読めていた範囲。自リポジトリを full path で参照するワークフローの監査に必要)。
-
-1. Organization → Settings → Developer settings → **GitHub Apps** → **New GitHub App** で App を作成
-
-| 設定項目 | 値 |
-|:--------|:--|
-| GitHub App name | `<org>-zizmor`(GitHub 全体で一意なら任意) |
-| Homepage URL | 本リポジトリの URL |
-| Webhook → Active | ❌(チェックを外す) |
-| Repository permissions → Contents | `Read-only`(他はすべて `No access`) |
-| Where can this GitHub App be installed? | `Only on this account` |
-
-2. 作成後の App 設定ページで **Client ID** を控え、**Private keys** → **Generate a private key** で `.pem` をダウンロード
-3. **Install App** → org を選び、Repository access は `All repositories`(対象リポジトリ自身を含めるため。新規リポジトリも自動で対象)。トークンは実行ごとに `github-workflows` と対象リポジトリの 2 つに絞って発行される
-4. Organization → Settings → Secrets and variables → Actions に登録する
-
-| 種別 | Name | 値 | Repository access |
-|:----|:-----|:--|:--|
-| Variable | `ZIZMOR_APP_CLIENT_ID` | 2. の Client ID | `All repositories` |
-| Secret | `ZIZMOR_APP_PRIVATE_KEY` | 2. の `.pem` の内容 | `All repositories` |
-
-- 必須ワークフローは対象リポジトリ側で変数 / シークレットを解決するため、Repository access は `All repositories` にする(caller ワークフローを持つリポジトリだけに絞ることもできるが、導入のたびに追加が必要になる)
-- 変数 / シークレットを参照できない場合(未登録、fork / Dependabot の PR)と、発行に失敗した場合(鍵ローテーション漏れ・App のアンインストール・Client ID 誤りなど)は `github.token` にフォールバックして warning を出す。private な参照先があると `impostor-commit` は fatal になる(本リポジトリが public なら問題なく通る)。org 全体の必須チェックを止めないため、発行失敗で job は失敗させない
-- Dependabot 起動の PR には Actions secrets ではなく **Dependabot secrets** が渡される(`vars` は参照可)。Dependabot を使うリポジトリがある場合は、Organization → Settings → Secrets and variables → **Dependabot** にも同名の `ZIZMOR_APP_PRIVATE_KEY` を登録する。未登録だと Dependabot の actions 更新 PR が常にフォールバックし、caller ワークフローを持つリポジトリではマージできない
-- `repositories` / `permission-contents` を限定しているため、ghalint の `github_app_should_limit_repositories` / `github_app_should_limit_permissions` を満たす
-
-- トークンで読めるのは `github-workflows` と対象リポジトリ自身のみ。それ以外の private リポジトリの action / reusable workflow を参照するワークフローでは、`impostor-commit` は従来の `GITHUB_TOKEN` と同様に fatal になる(対応が必要なら `zizmor.yml` の `repositories` の計算に加える。`.github/workflows/**` の変更として security チームの承認対象)
-
-**残余リスク** : 秘密鍵は org の全ワークフローから読め、App は全リポジトリにインストールされているため、鍵を持ち出されると Actions の外から(ローテーションまで)org 内の全リポジトリの contents を読むトークンを発行できる。`zizmor.yml` の `repositories` / `permission-contents` は要求の絞り込みに過ぎず、実際の上限は App 側の設定で決まる。Base permissions(「0.」)が `Read` の org ではメンバーの既存権限と同等だが、`No permission` の org では「write 権限を持つ 1 リポジトリ」から他リポジトリの読み取りに広がる。
-
-- App の権限は今後も `Contents: Read-only` 以外を付けない(付けた瞬間、全リポジトリに露出している鍵の価値が上がる)
-- 鍵のローテーション: App 設定ページ → **Private keys** → **Generate a private key** で新しい鍵を生成 → org シークレット(Dependabot secret も登録していればそれも)を新しい鍵で更新 → 動作確認後に旧鍵を **Delete**。切り替えの間に発行が失敗しても、上記のフォールバックで必須チェックは止まらない。鍵の漏えいが疑われる場合も同じ手順で即時に無効化できる
 
 </details>
 
@@ -510,5 +471,20 @@ action はこの App のトークンで進捗コメントやインラインコ�
 |:----|:----|
 | `anthropics/claude-code-action` / `oven-sh/setup-bun` の実行許可 | 「3.」 Actions permissions |
 | `claude-*.yml` の変更に security チームの承認を必須化 | 「2.」ルールセット「🛠️ 検知ワークフロー変更の承認必須化」(File patterns `.github/workflows/**` で自動的に対象) |
+
+</details>
+
+<details><summary><b>caller ワークフローと zizmor(本リポジトリが private の場合)</b></summary>
+
+必須ワークフロー `zizmor.yml` は対象リポジトリの `GITHUB_TOKEN` で動くため、private な本リポジトリのタグ / ブランチ一覧を取得できない。
+このまま caller ワークフロー(`uses: <org>/github-workflows/.github/workflows/claude-*.yml@<sha>`)を online 監査すると、zizmor の `impostor-commit` が findings ではなく fatal で終了し、caller を導入する PR がマージできなくなる([#21](https://github.com/theindiehacker/github-workflows/issues/21))。
+
+このため `zizmor.yml` は、**repository 形式の `uses:` がすべて `<org>/github-workflows/` 宛てのファイル**だけを online 監査なし(`--no-online-audits`)で実行し、annotation(notice)でその旨を表示する。
+
+- caller ワークフローには他の action の `uses:` を混ぜないこと。1 つでも混ざると online 監査の対象になり、参照先を読めずに fatal になる(`/indiehacker:install-review-workflow` が生成する caller はこの形)
+- 失う検知は「本リポジトリの参照に対する `impostor-commit`」のみ。fork 禁止(「0.」)の private リポジトリには fork ネットワークが無く impostor commit が成立しないため、実質的な影響はない。`known-vulnerable-actions` は reusable workflow を監査対象にしない
+- 本リポジトリ以外の private リポジトリの action / reusable workflow を参照するワークフローは、従来どおり fatal になる(必要なら `zizmor.yml` の判定に追加する。`.github/workflows/**` の変更として security チームの承認対象)
+- 免除の判定は内容ベースのため、ファイル名を偽っても他の `uses:` の監査は回避できない
+- zizmor 本体に「特定リポジトリの参照だけ `impostor-commit` を除外する」設定(要望: [zizmorcore/zizmor#1350](https://github.com/zizmorcore/zizmor/issues/1350))が実装されたら、この振り分けを削除して `.github/zizmor.yml` の設定に乗り換える
 
 </details>

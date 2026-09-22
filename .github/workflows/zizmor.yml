@@ -63,47 +63,6 @@ jobs:
             exit 1
           fi
 
-      - name: "App トークンの要否と対象リポジトリを決定"
-        # 必須ワークフローは対象リポジトリの文脈で動くため、org の変数 / シークレットは対象リポジトリ側で解決される。
-        # fork / Dependabot の PR ではシークレットが渡されないため、有無を見てトークン発行を skip する
-        # （secrets コンテキストは step の if で参照できないため、step の env 経由で真偽値にする）。
-        # トークンの対象は github-workflows と対象リポジトリ自身。github.token で読めていた自リポジトリを含めないと、
-        # 自リポジトリを full path（<org>/<repo>/...@<sha>）で参照するワークフローの impostor-commit 監査が退行する
-        if: steps.filter.outputs.config == 'true' || steps.filter.outputs.targets == 'true'
-        id: app
-        shell: bash
-        env:
-          HAS_APP: ${{ vars.ZIZMOR_APP_CLIENT_ID != '' && secrets.ZIZMOR_APP_PRIVATE_KEY != '' }}
-          REPO_NAME: ${{ github.event.repository.name }}
-        run: |
-          set -euo pipefail
-          repositories="github-workflows"
-          if [ "${REPO_NAME}" != "github-workflows" ]; then
-            repositories="${repositories},${REPO_NAME}"
-          fi
-          {
-            echo "available=${HAS_APP}"
-            echo "repositories=${repositories}"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: "github-workflows 参照用トークンを発行"
-        # 対象リポジトリの github.token は自リポジトリにしか届かず、private な本リポジトリのタグ / ブランチ一覧を取得できない。
-        # zizmor の impostor-commit 監査は参照先の一覧取得に失敗すると fatal で終了する
-        # （findings ではなく監査内部の例外のため .github/zizmor.yml の ignore では抑制できない: #21）。
-        # 本リポジトリと対象リポジトリ自身のみ・contents: read に限定した installation token を発行して GH_TOKEN に渡す。
-        # 発行に失敗（鍵ローテーション漏れ・App のアンインストール・Client ID 誤りなど）しても job は止めず
-        # github.token にフォールバックする。必須チェックのため、ここで失敗させると org 全体のワークフロー変更 PR が止まる
-        if: steps.app.outputs.available == 'true'
-        id: app-token
-        continue-on-error: true
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
-        with:
-          client-id: ${{ vars.ZIZMOR_APP_CLIENT_ID }}
-          private-key: ${{ secrets.ZIZMOR_APP_PRIVATE_KEY }}
-          # owner は既定値（対象リポジトリの owner）
-          repositories: ${{ steps.app.outputs.repositories }}
-          permission-contents: read
-
       - name: "Install zizmor"
         if: steps.filter.outputs.config == 'true' || steps.filter.outputs.targets == 'true'
         shell: bash
@@ -127,25 +86,15 @@ jobs:
         if: steps.filter.outputs.config == 'true' || steps.filter.outputs.targets == 'true'
         shell: bash
         env:
-          # GH_TOKEN があると online audit（impostor-commit / known-vulnerable-actions 等）も有効になる。
-          # App トークンが無い（資格情報未登録・fork / Dependabot の PR）か発行に失敗した場合は github.token にフォールバックする
-          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
-          # success / failure / skipped（資格情報なし）
-          APP_TOKEN_OUTCOME: ${{ steps.app-token.outcome }}
+          # GH_TOKEN があると online audit（impostor-commit / known-vulnerable-actions 等）も有効になる
+          GH_TOKEN: ${{ github.token }}
           # 設定ファイルは全ファイルの検出結果に影響するため、変更時は repo 全体をスキャン
           SCAN_ALL: ${{ steps.filter.outputs.config }}
           TARGETS: ${{ steps.filter.outputs.targets_files }}
+          # <org>/github-workflows（本リポジトリ）だけを参照するファイルの判定に使う
+          OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
-          case "${APP_TOKEN_OUTCOME}" in
-            success) ;;
-            failure) reason="App トークンの発行に失敗したため" ;;
-            *) reason="App の資格情報（ZIZMOR_APP_CLIENT_ID / ZIZMOR_APP_PRIVATE_KEY）を参照できないため" ;;
-          esac
-          if [ "${APP_TOKEN_OUTCOME}" != "success" ]; then
-            echo "::warning::${reason} github.token で実行します。private リポジトリ（github-workflows 等）を参照するワークフローがあると impostor-commit 監査が fatal になります（docs/SETUP.md 3. を参照）"
-          fi
-
           # 設定ファイルの自動探索はリポジトリ直下や入力ファイルの祖先ディレクトリの zizmor.yml / zizmor.yaml
           # にも及び、承認必須（2.5）の対象外パスから検出を抑制できてしまうため、
           # 承認必須の .github/zizmor.yml に固定する（未作成なら設定なしで実行する）
@@ -154,14 +103,54 @@ jobs:
             config_args=(--config .github/zizmor.yml)
           fi
 
-          # --format github: 検出箇所を PR に annotation 表示する
+          # スキャン対象を列挙する（設定ファイル変更時は tracked な Actions 関連ファイルすべて）
+          targets=()
           if [ "${SCAN_ALL}" = "true" ]; then
-            zizmor --no-progress --format github --min-severity high "${config_args[@]}" .
-            exit 0
+            while IFS= read -r t; do
+              targets+=("${t}")
+            done < <(git ls-files -- ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' \
+              ':(glob)**/action.yml' ':(glob)**/action.yaml')
+          else
+            while IFS= read -r t; do
+              if [ -n "${t}" ]; then targets+=("${t}"); fi
+            done < <(jq -r '.[]' <<< "${TARGETS}")
           fi
 
-          targets=()
-          while IFS= read -r t; do
-            if [ -n "${t}" ]; then targets+=("${t}"); fi
-          done < <(jq -r '.[]' <<< "${TARGETS}")
-          zizmor --no-progress --format github --min-severity high "${config_args[@]}" "${targets[@]}"
+          # 本リポジトリ（<org>/github-workflows）の reusable workflow / action だけを参照するファイル（Claude レビューの
+          # caller 等）は online 監査を省く。本リポジトリが private の場合、対象リポジトリの github.token では本リポジトリの
+          # タグ一覧を取得できず、impostor-commit が findings ではなく fatal で終了するため（#21）。fork 禁止の private
+          # リポジトリには fork ネットワークが無く impostor commit が成立しないので、この参照で失う検知は実質無い。
+          # 判定はファイル名ではなく内容で行う: repository 形式の uses:（./ docker:// $/ 以外）がすべて本リポジトリ宛ての
+          # ファイルだけを対象にし、他の action を 1 つでも参照するファイルは従来どおり online で監査する
+          # （免除されたファイルには online 監査で隠せる参照が無いため、抜け道にならない）。
+          # uses: の値が次行に分かれている等で読み取れない場合は online 側に寄せる（fatal で気付ける安全側）。
+          #
+          # TODO: zizmor 本体に「特定リポジトリの参照だけ impostor-commit を除外する」設定
+          #       （rules.impostor-commit.config.ignore: [<org>/github-workflows] 案）が実装されたら、
+          #       この振り分けを削除して .github/zizmor.yml の設定に乗り換える。
+          #       要望 Issue: https://github.com/zizmorcore/zizmor/issues/1350
+          online=()
+          offline=()
+          for t in "${targets[@]}"; do
+            refs=$(sed -nE 's/^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*//p' "${t}" \
+              | sed -E 's/[[:space:]]+#.*$//; s/^["'"'"']//; s/["'"'"']$//' \
+              | grep -vE '^(\./|docker://|\$/)' || true)
+            if [ -n "${refs}" ] && ! grep -qvE "^${OWNER}/github-workflows/" <<< "${refs}"; then
+              offline+=("${t}")
+              echo "::notice file=${t}::${OWNER}/github-workflows のみを参照するため online 監査（impostor-commit 等）を省略しました（docs/SETUP.md 4. を参照）"
+            else
+              online+=("${t}")
+            fi
+          done
+
+          # --format github: 検出箇所を PR に annotation 表示する。2 回の実行のうち大きい exit code を返す
+          rc=0
+          if [ "${#online[@]}" -gt 0 ]; then
+            zizmor --no-progress --format github --min-severity high "${config_args[@]}" "${online[@]}" || rc=$?
+          fi
+          if [ "${#offline[@]}" -gt 0 ]; then
+            r=0
+            zizmor --no-progress --no-online-audits --format github --min-severity high "${config_args[@]}" "${offline[@]}" || r=$?
+            if [ "${r}" -gt "${rc}" ]; then rc="${r}"; fi
+          fi
+          exit "${rc}"
