@@ -111,7 +111,8 @@ jobs:
 
           if [ "${SCAN_ALL}" = "true" ]; then
             # `zizmor .` が収集する種類（workflow / action / dependabot / pre-commit）を tracked ファイルから列挙する
-            mapfile -t targets < <(git ls-files -- \
+            # -z: 非 ASCII パスが core.quotePath でクォートされ、zizmor がリモート入力と誤解して fatal になるのを防ぐ
+            mapfile -d '' -t targets < <(git ls-files -z -- \
               ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' ':(glob)**/action.yml' ':(glob)**/action.yaml' \
               ':(glob).github/dependabot.yml' ':(glob).github/dependabot.yaml' \
               ':(glob).pre-commit-config.yaml' ':(glob).pre-commit-config.yml' ':(glob).pre-commit-hooks.yaml' ':(glob).pre-commit-hooks.yml')
@@ -119,15 +120,21 @@ jobs:
             mapfile -t targets < <(jq -r '.[]' <<< "${TARGETS}")
           fi
 
-          # 本リポジトリ（<org>/github-workflows）だけを参照するファイル（Claude レビューの caller 等）は online 監査を省く。
-          # 本リポジトリが private だと対象リポジトリの github.token では参照先を読めず、impostor-commit が fatal で終了するため（#21）。
+          # 本リポジトリ（<org>/github-workflows）が private だと、対象リポジトリの github.token では参照先を読めず、
+          # 本リポジトリの reusable workflow を参照するファイル（Claude レビューの caller 等）の impostor-commit が
+          # findings ではなく fatal で終了する（#21）。そこで実行トークンで本リポジトリを読めるかを先に確認し、
+          # 読めるなら従来どおり全件 online、読めない場合だけ本リポジトリのみを参照するファイルを online 監査なしで実行する。
           # fork 禁止の private リポジトリには fork 由来の impostor commit が成立せず、ブランチ / タグに属さない SHA の検知は
-          # private 化後は github.token ではどのみち監査できないため、この省略で新たに失う検知は無い。
+          # github.token ではどのみち監査できないため、この省略で新たに失う検知は無い。
           # 他の action を 1 つでも参照するファイルは従来どおり online で監査するため、免除を抜け道にはできない。
           # TODO: zizmor に特定リポジトリを除外する設定が入ったら .github/zizmor.yml に乗り換える
           #       https://github.com/zizmorcore/zizmor/issues/1350
           online=()
           offline=()
+          if curl -fs -o /dev/null -H "Authorization: Bearer ${GH_TOKEN}" "${GITHUB_API_URL}/repos/${OWNER}/github-workflows"; then
+            online=("${targets[@]}")
+            targets=()
+          fi
           for t in "${targets[@]}"; do
             # YAML を解析して uses: の値を再帰的に集める（flow 形式・引用符付きキー・アンカーも対象。zizmor と同じ見え方にする）。
             # 解析に失敗したファイルは refs が空になり online 側に倒れる（fatal で気付ける安全側）
