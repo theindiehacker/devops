@@ -5,7 +5,7 @@ name: "🛡️ Trivy スキャン"
 # fs / image の 2 種のスキャンを 1 ワークフローの別ジョブとして定義する。共通の起動ポリシー
 # （scanners / ignore-unfixed / exit-code / DB フォールバック）は scan-fs 側で
 # YAML アンカー（&trivy-*）として単一定義し、scan-image はエイリアスで参照する。
-# severity だけは対象 repo の trivy.yaml を読んで組み立てるため detect job の output で配る。
+# severity と抑制ファイル（trivyignores）は対象 repo の設定を読んで組み立てるため detect job の output で配る。
 #
 # Required workflow は対象 repo から inputs を受け取れないため、image スキャンは規約ベースで動作する:
 #   - 対象 repo にビルドマニフェスト（.github/trivy-image.yml）があればそれに従い、
@@ -53,13 +53,14 @@ jobs:
       - name: "インライン ignore コメントの禁止"
         # Trivy にはインライン ignore を無効化するオプションがないため、トークンの存在自体を禁止する
         # （抑制は承認必須の .trivyignore / .trivyignore.yaml に限定する）。
+        # Trivy は tfsec 互換で tfsec 接頭辞のトークンも ignore として扱うため、両方を対象にする。
         # トークンを分割して組み立てているのは、このファイル自身が検知されるのを防ぐため
         shell: bash
         run: |
           set -euo pipefail
-          TOKEN='trivy:''ignore'
-          if git grep -InF "${TOKEN}" -- .; then
-            echo "::error::インライン ignore コメント（${TOKEN}）は使用できません。.trivyignore / .trivyignore.yaml で抑制してください（変更にはセキュリティチームの承認が必要）"
+          TOKEN='(trivy|tfsec):''ignore'
+          if git grep -InE "${TOKEN}" -- .; then
+            echo "::error::インライン ignore コメント（trivy / tfsec の ignore トークン）は使用できません。.trivyignore / .trivyignore.yaml で抑制してください（変更にはセキュリティチームの承認が必要）"
             exit 1
           fi
 
@@ -76,6 +77,7 @@ jobs:
           severity: ${{ needs.detect.outputs.severity }}  # 検知するレベル（下限 HIGH,CRITICAL。detect job 参照）
           ignore-unfixed: &trivy-ignore-unfixed true  # 修正パッチがないものは除外 (vuln のみに作用)
           exit-code: &trivy-exit-code 1
+          trivyignores: ${{ needs.detect.outputs.trivyignores }}  # 抑制ファイル（detect job 参照）
           # GHAS なし (private repo で Code Scanning 不可) のため SARIF ではなく JSON で出力し、
           # 次の step で table 表示と PR への annotation 生成を行う
           format: json
@@ -83,7 +85,7 @@ jobs:
 
       - name: "スキャン結果を log と annotation に表示"
         # exit-code=1 で Trivy が落ちても結果は出す (CI の Details で即確認するため)
-        if: always() && hashFiles('trivy-fs.json') != ''
+        if: ${{ !cancelled() && hashFiles('trivy-fs.json') != '' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -91,18 +93,21 @@ jobs:
           cat trivy-fs.txt
 
           # 検出箇所を PR に annotation 表示する。misconfig は行番号付き、
-          # vuln は行番号を持たないため Target（ロックファイル等）単位で出力する
+          # vuln は行番号を持たないため Target（ロックファイル等）単位で出力する。
+          # パッケージ名やパスは PR 側で任意の値にできるため、workflow command としてエスケープする
           jq -r '
-            .Results[]? | .Target as $t |
+            def esc: gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");
+            def esc_prop: esc | gsub(":"; "%3A") | gsub(","; "%2C");
+            .Results[]? | (.Target | esc_prop) as $t |
             ((.Vulnerabilities // [])[]
-              | "::error file=\($t)::trivy (\(.VulnerabilityID)): \(.PkgName)@\(.InstalledVersion) — \(.Title // .VulnerabilityID)"),
+              | "::error file=\($t)::" + ("trivy (\(.VulnerabilityID)): \(.PkgName)@\(.InstalledVersion) — \(.Title // .VulnerabilityID)" | esc)),
             ((.Misconfigurations // [])[]
-              | "::error file=\($t),line=\(.CauseMetadata.StartLine // 1)::trivy (\(.AVDID // .ID)): \(.Title)")
+              | "::error file=\($t),line=\(.CauseMetadata.StartLine // 1)::" + ("trivy (\(.AVDID // .ID)): \(.Title)" | esc))
           ' trivy-fs.json
 
       - name: "スキャン結果を artifact に保存"
         # log は retention に依存するため、後追い調査用に artifact でも残す
-        if: always() && hashFiles('trivy-fs.json') != ''
+        if: ${{ !cancelled() && hashFiles('trivy-fs.json') != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: trivy-fs
@@ -120,13 +125,14 @@ jobs:
     outputs:
       images: ${{ steps.detect.outputs.images }}
       severity: ${{ steps.policy.outputs.severity }}
+      trivyignores: ${{ steps.policy.outputs.trivyignores }}
     steps:
       - name: "Checkout"
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
-      - name: "検知する severity を決定"
+      - name: "検知する severity / 抑制ファイルを決定"
         id: policy
         shell: bash
         run: |
@@ -165,6 +171,19 @@ jobs:
           severity=$(printf '%s\n' "${levels[@]}" | sort -u | paste -sd, -)
           echo "severity=${severity}" >> "$GITHUB_OUTPUT"
           echo "検知する severity: ${severity}"
+
+          # Trivy が既定で読む抑制ファイルは .trivyignore のみのため、.trivyignore.yaml は明示的に渡す。
+          # trivy-action は形式の異なる 2 ファイルを併用できないため、両方ある場合は落とす
+          trivyignores=""
+          if [ -f .trivyignore.yaml ]; then
+            if [ -f .trivyignore ]; then
+              echo "::error file=.trivyignore.yaml::.trivyignore と .trivyignore.yaml は併用できません。どちらか一方にまとめてください"
+              exit 1
+            fi
+            trivyignores=".trivyignore.yaml"
+          fi
+          echo "trivyignores=${trivyignores}" >> "$GITHUB_OUTPUT"
+          echo "抑制ファイル: ${trivyignores:-.trivyignore（Trivy 既定）}"
 
       - name: "マニフェスト or 自動検出でスキャン対象を決定"
         id: detect
@@ -257,10 +276,12 @@ jobs:
           load: true  # スキャン用に docker daemon へ読み込む
           tags: localbuild/trivy-scan:latest
           provenance: false  # attestation 付き OCI image は load できないため無効化
-          # PR ごとの再ビルドを軽くする。GHA cache は対象 repo 単位のため repo 間で衝突せず、
-          # scope で同一 repo 内の Dockerfile / target 単位にも分離する
+          # 同一 PR 内の再ビルドを軽くする。GHA cache は対象 repo 単位のため repo 間で衝突せず、
+          # scope で同一 repo 内の Dockerfile / target 単位にも分離する。
+          # main で run しないため cache は PR ごとに閉じて他 PR へ共有されない。repo の cache 枠
+          # （他ワークフローと共用）を圧迫しないよう、中間ステージまで書き出す mode=max は使わない
           cache-from: type=gha,scope=trivy-image-${{ matrix.suffix }}
-          cache-to: type=gha,mode=max,scope=trivy-image-${{ matrix.suffix }}
+          cache-to: type=gha,mode=min,scope=trivy-image-${{ matrix.suffix }}
 
       - name: "Trivy image スキャン"
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
@@ -273,12 +294,13 @@ jobs:
           severity: ${{ needs.detect.outputs.severity }}
           ignore-unfixed: *trivy-ignore-unfixed
           exit-code: *trivy-exit-code
+          trivyignores: ${{ needs.detect.outputs.trivyignores }}
           format: json
           output: trivy-image.json
 
       - name: "スキャン結果を log と annotation に表示"
         # exit-code=1 で Trivy が落ちても結果は出す (CI の Details で即確認するため)
-        if: always() && hashFiles('trivy-image.json') != ''
+        if: ${{ !cancelled() && hashFiles('trivy-image.json') != '' }}
         shell: bash
         env:
           DOCKERFILE: ${{ matrix.dockerfile }}
@@ -288,18 +310,22 @@ jobs:
           cat trivy-image.txt
 
           # イメージ内の検出はリポジトリ上のファイル位置に対応しないため、
-          # ビルド元の Dockerfile に集約して PR に annotation 表示する
+          # ビルド元の Dockerfile に集約して PR に annotation 表示する。
+          # パッケージ名やパスは PR 側で任意の値にできるため、workflow command としてエスケープする
           jq -r --arg df "${DOCKERFILE}" '
+            def esc: gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");
+            def esc_prop: esc | gsub(":"; "%3A") | gsub(","; "%2C");
+            ($df | esc_prop) as $f |
             .Results[]? |
             ((.Vulnerabilities // [])[]
-              | "::error file=\($df)::trivy (\(.VulnerabilityID)): \(.PkgName)@\(.InstalledVersion) — \(.Title // .VulnerabilityID)"),
+              | "::error file=\($f)::" + ("trivy (\(.VulnerabilityID)): \(.PkgName)@\(.InstalledVersion) — \(.Title // .VulnerabilityID)" | esc)),
             ((.Misconfigurations // [])[]
-              | "::error file=\($df)::trivy (\(.AVDID // .ID)): \(.Title)")
+              | "::error file=\($f)::" + ("trivy (\(.AVDID // .ID)): \(.Title)" | esc))
           ' trivy-image.json
 
       - name: "スキャン結果を artifact に保存"
         # log は retention に依存するため、後追い調査用に artifact でも残す
-        if: always() && hashFiles('trivy-image.json') != ''
+        if: ${{ !cancelled() && hashFiles('trivy-image.json') != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: trivy-image-${{ matrix.suffix }}
