@@ -473,18 +473,3 @@ action はこの App のトークンで進捗コメントやインラインコ�
 | `claude-*.yml` の変更に security チームの承認を必須化 | 「2.」ルールセット「🛠️ 検知ワークフロー変更の承認必須化」(File patterns `.github/workflows/**` で自動的に対象) |
 
 </details>
-
-<details><summary><b>caller ワークフローと zizmor(本リポジトリが private の場合)</b></summary>
-
-必須ワークフロー `zizmor.yml` は対象リポジトリの `GITHUB_TOKEN` で動くため、private な本リポジトリのタグ / ブランチ一覧を取得できない。
-このまま caller ワークフロー(`uses: <org>/github-workflows/.github/workflows/claude-*.yml@<sha>`)を online 監査すると、zizmor の `impostor-commit` が findings ではなく fatal で終了し、caller を導入する PR がマージできなくなる([#21](https://github.com/theindiehacker/github-workflows/issues/21))。
-
-このため `zizmor.yml` は、**repository 形式の `uses:` がすべて `<org>/github-workflows/` 宛てのファイル**だけを online 監査なし(`--no-online-audits`)で実行し、annotation(notice)でその旨を表示する。
-
-- caller ワークフローには他の action の `uses:` を混ぜないこと。1 つでも混ざると online 監査の対象になり、参照先を読めずに fatal になる(`/indiehacker:install-review-workflow` が生成する caller はこの形)
-- 失う検知は「本リポジトリの参照に対する `impostor-commit`」のみ。fork 禁止(「0.」)の private リポジトリには fork ネットワークが無く impostor commit が成立しないため、実質的な影響はない。`known-vulnerable-actions` は reusable workflow を監査対象にしない
-- 本リポジトリ以外の private リポジトリの action / reusable workflow を参照するワークフローは、従来どおり fatal になる(必要なら `zizmor.yml` の判定に追加する。`.github/workflows/**` の変更として security チームの承認対象)
-- 免除の判定は内容ベースのため、ファイル名を偽っても他の `uses:` の監査は回避できない
-- zizmor 本体に「特定リポジトリの参照だけ `impostor-commit` を除外する」設定(要望: [zizmorcore/zizmor#1350](https://github.com/zizmorcore/zizmor/issues/1350))が実装されたら、この振り分けを削除して `.github/zizmor.yml` の設定に乗り換える
-
-</details>
