@@ -115,12 +115,12 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-release-attachments depName=oven-sh/bun
-          VERSION: 1.4.2
+          VERSION: bun-v1.4.2
           SHA256: 36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913
         run: |
           set -euo pipefail
           ARCHIVE="bun-linux-x64.zip"
-          curl -sSfL -o "$ARCHIVE" "https://github.com/oven-sh/bun/releases/download/bun-v${VERSION}/${ARCHIVE}"
+          curl -sSfL -o "$ARCHIVE" "https://github.com/oven-sh/bun/releases/download/${VERSION}/${ARCHIVE}"
 
           # SHA-256 検証（改ざん・破損を検知）
           echo "${SHA256}  ${ARCHIVE}" | sha256sum -c -

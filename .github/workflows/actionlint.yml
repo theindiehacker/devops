@@ -49,12 +49,12 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-release-attachments depName=rhysd/actionlint
-          VERSION: 1.7.12
+          VERSION: v1.7.12
           SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
         run: |
           set -euo pipefail
-          ARCHIVE="actionlint_${VERSION}_linux_amd64.tar.gz"
-          curl -sSfL -o "$ARCHIVE" "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/${ARCHIVE}"
+          ARCHIVE="actionlint_${VERSION#v}_linux_amd64.tar.gz"
+          curl -sSfL -o "$ARCHIVE" "https://github.com/rhysd/actionlint/releases/download/${VERSION}/${ARCHIVE}"
 
           # SHA-256 検証（改ざん・破損を検知）
           echo "${SHA256}  ${ARCHIVE}" | sha256sum -c -

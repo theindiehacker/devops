@@ -2,14 +2,13 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "customManagers": [
     {
-      "description": "ツール導入 step の VERSION と SHA256 を更新する（SHA256 は release アセットの digest から算出される）。VERSION は引用符付きでも取れる。tag が v 始まりのツール用",
+      "description": "ツール導入 step の VERSION と SHA256 を更新する（SHA256 は release アセットの digest から算出される）。VERSION は引用符付きでも取れる。VERSION には GitHub release のタグ名そのもの（v1.2.3 / bun-v1.2.3 など）を書く。github-release-attachments の digest 解決は VERSION の値でタグを検索するため、extractVersion で v を剥がすと 404 になる（renovatebot/renovate#45674）",
       "customType": "regex",
       "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.yml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>[a-zA-Z0-9-._]+?) depName=(?<depName>[^\\s]+?)\\s+(?:[A-Z0-9_]+_)?VERSION:\\s*\"?(?<currentValue>[^\\s\"]+)\"?\\s+(?:[A-Z0-9_]+_)?SHA256:\\s*(?<currentDigest>\\S+)"
       ],
-      "versioningTemplate": "semver",
-      "extractVersionTemplate": "^v(?<version>.*)$"
+      "versioningTemplate": "semver"
     },
     {
       "description": "Python ツール導入 step の <TOOL>_VERSION を PyPI の最新版に更新する（datasource=pypi のブロックのみ対象、SHA256 は無い）",
@@ -24,9 +23,9 @@
   ],
   "packageRules": [
     {
-      "description": "Bun のリリースタグは bun-v プレフィックス付きのためバージョン抽出を上書きする",
+      "description": "Bun のリリースタグは bun-v プレフィックス付きで semver として解釈できないため、regex versioning でバージョンを読み取る（canary 等の非リリースタグは除外される）",
       "matchPackageNames": ["oven-sh/bun"],
-      "extractVersion": "^bun-v(?<version>.*)$"
+      "versioning": "regex:^bun-v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
     }
   ]
 }
