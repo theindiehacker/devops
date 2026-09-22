@@ -81,7 +81,7 @@ jobs:
           git symbolic-ref refs/remotes/origin/HEAD "refs/remotes/origin/${BASE_REF}"
 
       - name: Run Claude Security Review
-        uses: anthropics/claude-code-action@51db78a4b844e144f8d02425cb280435c04a3474  # v1.0.224
+        uses: anthropics/claude-code-action@4036a180cf690f49529f5d8c79c998855287f590  # v1.0.230
         env:
           # バックグラウンドを有効化しておくとレビューが投稿されずにワークフローが終了するため、無効化
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
