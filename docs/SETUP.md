@@ -451,6 +451,7 @@ Claude Code を GitHub 上から呼び出す reusable workflow を使うため�
 | `claude.yml` | Issue のタイトル・本文、Issue / PR のコメント・レビューで `@claude` にメンション(質問への回答・実装・ブランチへの push) | `issue_comment: [created]`<br/>`pull_request_review_comment: [created]`<br/>`pull_request_review: [submitted]`<br/>`issues: [opened]` | `contents: write` / `pull-requests: write` / `issues: write` / `id-token: write` |
 
 - いずれも `OWNER` / `MEMBER` / `COLLABORATOR` のコメントにだけ反応し、PR は open のものに限る
+  - Organization のメンバーシップが非公開だとイベント上は `CONTRIBUTOR` 扱いになり起動しないため、利用者は 🔗 Organization → People で自分の visibility を `Public` にする
 - 本リポジトリでは `.github/workflows/self-claude.yml` からローカル参照(`uses: ./.github/workflows/...`)で呼び出す
 - PR 本文の `@claude` では起動しない(`pull_request` トリガーは fork PR の扱いが増えるため持たない)
 - `@claude` の判定は部分一致のため、`@claude-bot` や `foo@claude.ai` でも job は起動する。action 側で完全一致しないと判定された場合は何も投稿されずに終わる
