@@ -264,7 +264,7 @@ ghalint.yaml
 
 > 必須ワークフローの実体(本リポジトリの `.github/workflows/`)を変更する PR にセキュリティチーム(`security`)の承認を必須化するルール。
 > 必須ワークフロー(2.3〜2.4・2.7)は本リポジトリの `main` 上の定義を参照しているため、検知を弱める変更(severity の引き下げ・`exit-code: 0` 化など)が通常の承認(2.2)だけで通ると org 全体の検知が無効化されてしまう
-> Claude レビューワークフロー(`.github/workflows/claude-*.yml`)も呼び出し側の全リポジトリで write 権限付きのプロンプトとして動くため、同じ File patterns(`.github/workflows/**`)で本ルールの対象になる
+> Claude ワークフロー(`.github/workflows/claude*.yml`)も呼び出し側の全リポジトリで write 権限付きのプロンプトとして動くため、同じ File patterns(`.github/workflows/**`)で本ルールの対象になる
 
 | 設定項目 | 値                        |
 |:-------:|:-------------------------|
@@ -440,9 +440,18 @@ renovatebot/github-action@*
 </details>
 
 ---
-## 4. 🧠 Claude レビューワークフロー
+## 4. 🧠 Claude ワークフロー
 
-PR のコメント(`/code-review` / `/security-review`)で Claude Code にレビューさせる reusable workflow を使うための設定。
+Claude Code を GitHub 上から呼び出す reusable workflow を使うための設定。
+
+| ワークフロー | 呼び出し方 | 呼び出し側の `on:` | 呼び出し側の job `permissions` |
+|:----|:----|:----|:----|
+| `claude-code-review.yml` | PR に `/code-review` とコメント | `issue_comment: [created]` | `contents: read` / `pull-requests: write` / `issues: write` / `id-token: write` |
+| `claude-security-review.yml` | PR に `/security-review` とコメント | `issue_comment: [created]` | 同上 |
+| `claude.yml` | Issue / PR の本文・コメント・レビューで `@claude` にメンション(質問への回答・実装・ブランチへの push) | `issue_comment: [created]`<br/>`pull_request_review_comment: [created]`<br/>`pull_request_review: [submitted]`<br/>`issues: [opened]` | `contents: write` / `pull-requests: write` / `issues: write` / `id-token: write` |
+
+- いずれも `OWNER` / `MEMBER` / `COLLABORATOR` のコメントにだけ反応し、PR は open のものに限る
+- `claude.yml` は Issue から呼ぶと `claude/` 始まりのブランチに実装を push し、PR 作成リンクをコメントする(PR 自体は人が作成する)
 
 <details><summary><b>組織シークレットを登録する</b></summary>
 
@@ -456,7 +465,7 @@ PR のコメント(`/code-review` / `/security-review`)で Claude Code にレビ
 - **どちらか一方のみ**登録する
 - Repository access は `Private repositories` にする。public リポジトリにもリポジトリシークレットとして登録しない
   - public リポジトリでは fork からの PR にもメンバーのコメントでレビューが走り、PR の差分に仕込まれた指示で Claude にトークンを読み出させる経路が残るため
-  - シークレットを参照できないリポジトリではレビューは失敗し、進捗コメントに表示される
+  - シークレットを参照できないリポジトリでは実行が失敗し、進捗コメントに表示される
 
 </details>
 
@@ -472,6 +481,6 @@ action はこの App のトークンで進捗コメントやインラインコ�
 | 設定 | 参照 |
 |:----|:----|
 | `anthropics/claude-code-action` / `oven-sh/setup-bun` の実行許可 | 「3.」 Actions permissions |
-| `claude-*.yml` の変更に security チームの承認を必須化 | 「2.」ルールセット「🛠️ 検知ワークフロー変更の承認必須化」(File patterns `.github/workflows/**` で自動的に対象) |
+| `claude*.yml` の変更に security チームの承認を必須化 | 「2.」ルールセット「🛠️ 検知ワークフロー変更の承認必須化」(File patterns `.github/workflows/**` で自動的に対象) |
 
 </details>
