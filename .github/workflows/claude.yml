@@ -1,0 +1,81 @@
+name: "🧠 Claude"
+
+on:
+  workflow_call:
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: "claude setup-token で発行した OAuth トークン（ANTHROPIC_API_KEY とどちらか一方）"
+        required: false
+      ANTHROPIC_API_KEY:
+        description: "Anthropic API キー（CLAUDE_CODE_OAUTH_TOKEN とどちらか一方）"
+        required: false
+
+# write は job 側でのみ与える
+permissions: {}
+
+jobs:
+  claude:
+    name: "@claude への応答"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      # 実装結果をブランチに push するため write
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+
+    # concurrency は付けないこと。同じ Issue / PR 単位で直列化すると待機枠が 1 件しかなく、
+    # 実行中に届いた 2 件目以降の依頼が黙ってキャンセルされる
+
+    # pwn request 対策。条件を緩めないこと
+    # CONTRIBUTOR も許可するのは、メンバーシップ非公開のメンバーが pull_request_review(_comment) の payload で
+    # CONTRIBUTOR になるため。書き込み権限は action 側でも API で確認される
+    # closed / merged PR では action が PR ブランチではなく新規ブランチを作る経路に入るため open のみ
+    if: >-
+      (
+        github.event_name == 'issue_comment' &&
+        contains(github.event.comment.body, '@claude') &&
+        github.event.comment.user.type != 'Bot' &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.comment.author_association) &&
+        (!github.event.issue.pull_request || github.event.issue.state == 'open')
+      ) || (
+        github.event_name == 'pull_request_review_comment' &&
+        contains(github.event.comment.body, '@claude') &&
+        github.event.comment.user.type != 'Bot' &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.comment.author_association) &&
+        github.event.pull_request.state == 'open'
+      ) || (
+        github.event_name == 'pull_request_review' &&
+        contains(github.event.review.body, '@claude') &&
+        github.event.review.user.type != 'Bot' &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.review.author_association) &&
+        github.event.pull_request.state == 'open'
+      ) || (
+        github.event_name == 'issues' &&
+        (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
+        github.event.issue.user.type != 'Bot' &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.issue.author_association)
+      )
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 1
+          # false にしないこと。tag mode の action は checkout が残す認証で PR ブランチを fetch する (.github/ghalint.yml で除外)
+          persist-credentials: true
+
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@cfc3eb22bfed5c26ef66e3223c982af27e4524de  # v1.0.231
+        env:
+          # バックグラウンドを有効化しておくと応答が投稿されずにワークフローが終了するため、無効化
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
+        with:
+          # どちらか一方だけが組織シークレットに登録されている前提。空文字は action 側で未設定として扱われる
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          show_full_output: false
+          claude_args: |
+            --model claude-opus-5-5
+            --max-turns 200
