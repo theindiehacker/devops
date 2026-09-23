@@ -451,6 +451,7 @@ Claude Code を GitHub 上から呼び出す reusable workflow を使うため�
 | `claude.yml` | Issue / PR の本文・コメント・レビューで `@claude` にメンション(質問への回答・実装・ブランチへの push) | `issue_comment: [created]`<br/>`pull_request_review_comment: [created]`<br/>`pull_request_review: [submitted]`<br/>`issues: [opened]` | `contents: write` / `pull-requests: write` / `issues: write` / `id-token: write` |
 
 - いずれも `OWNER` / `MEMBER` / `COLLABORATOR` のコメントにだけ反応し、PR は open のものに限る
+- 本リポジトリでは呼び出し側ワークフローを置かず、各ワークフローの `on:` に上表のトリガーを直接持たせて使う(ファイル名が呼び出し側と衝突するため)
 - `claude.yml` は Issue から呼ぶと `claude/` 始まりのブランチに実装を push し、PR 作成リンクをコメントする(PR 自体は人が作成する)
 
 <details><summary><b>組織シークレットを登録する</b></summary>

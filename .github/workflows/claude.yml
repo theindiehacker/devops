@@ -1,6 +1,15 @@
 name: "🧠 Claude"
 
 on:
+  # 本リポジトリ自身でも使うため直接トリガーも持つ。他リポジトリからは workflow_call で呼ばれる
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  issues:
+    types: [opened]
   workflow_call:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
@@ -14,7 +23,7 @@ on:
 permissions: {}
 
 jobs:
-  mention:
+  claude:
     name: "@claude への応答"
     runs-on: ubuntu-latest
     timeout-minutes: 60

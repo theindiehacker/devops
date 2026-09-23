@@ -10,4 +10,4 @@ excludes:
     job_name: security-review
   - policy_name: checkout_persist_credentials_should_be_false
     workflow_file_path: .github/workflows/claude.yml
-    job_name: mention
+    job_name: claude
