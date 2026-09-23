@@ -1,6 +1,6 @@
 # ghalint のポリシー除外設定（変更には security チームの承認が必要: docs/SETUP.md 2.5）
 excludes:
-  # tag mode (track_progress) の claude-code-action は checkout が残す認証で PR ブランチを fetch するため
+  # tag mode (track_progress / メンション起動) の claude-code-action は checkout が残す認証で PR ブランチを fetch するため
   # persist-credentials: true が必須。除外は当該 job に限定する
   - policy_name: checkout_persist_credentials_should_be_false
     workflow_file_path: .github/workflows/claude-code-review.yml

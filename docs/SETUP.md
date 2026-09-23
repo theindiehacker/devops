@@ -448,10 +448,12 @@ Claude Code を GitHub 上から呼び出す reusable workflow を使うため�
 |:----|:----|:----|:----|
 | `claude-code-review.yml` | PR に `/code-review` とコメント | `issue_comment: [created]` | `contents: read` / `pull-requests: write` / `issues: write` / `id-token: write` |
 | `claude-security-review.yml` | PR に `/security-review` とコメント | `issue_comment: [created]` | 同上 |
-| `claude.yml` | Issue / PR の本文・コメント・レビューで `@claude` にメンション(質問への回答・実装・ブランチへの push) | `issue_comment: [created]`<br/>`pull_request_review_comment: [created]`<br/>`pull_request_review: [submitted]`<br/>`issues: [opened]` | `contents: write` / `pull-requests: write` / `issues: write` / `id-token: write` |
+| `claude.yml` | Issue のタイトル・本文、Issue / PR のコメント・レビューで `@claude` にメンション(質問への回答・実装・ブランチへの push) | `issue_comment: [created]`<br/>`pull_request_review_comment: [created]`<br/>`pull_request_review: [submitted]`<br/>`issues: [opened]` | `contents: write` / `pull-requests: write` / `issues: write` / `id-token: write` |
 
 - いずれも `OWNER` / `MEMBER` / `COLLABORATOR` のコメントにだけ反応し、PR は open のものに限る
-- 本リポジトリでは呼び出し側ワークフローを置かず、各ワークフローの `on:` に上表のトリガーを直接持たせて使う(ファイル名が呼び出し側と衝突するため)
+- 本リポジトリでは `.github/workflows/self-claude.yml` からローカル参照(`uses: ./.github/workflows/...`)で呼び出す
+- PR 本文の `@claude` では起動しない(`pull_request` トリガーは fork PR の扱いが増えるため持たない)
+- `@claude` の判定は部分一致のため、`@claude-bot` や `foo@claude.ai` でも job は起動する。action 側で完全一致しないと判定された場合は何も投稿されずに終わる
 - `claude.yml` は Issue から呼ぶと `claude/` 始まりのブランチに実装を push し、PR 作成リンクをコメントする(PR 自体は人が作成する)
 
 <details><summary><b>組織シークレットを登録する</b></summary>

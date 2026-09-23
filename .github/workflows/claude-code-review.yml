@@ -1,9 +1,6 @@
 name: "🧠 Claude / Code Review"
 
 on:
-  # 本リポジトリ自身でも使うため直接トリガーも持つ。他リポジトリからは workflow_call で呼ばれる
-  issue_comment:
-    types: [created]
   workflow_call:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
