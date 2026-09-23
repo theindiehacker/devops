@@ -113,7 +113,7 @@ Rules セクションで以下にチェック:
 |:-------:|:-------------------------|
 | Ruleset Name | `✅ PR の承認を必須化`         |
 | Enforcement status | `Active`                 |
-| Bypass list | 空のまま<br/>開発者が 1 人だけの場合は「1.」の注意書きを参照 |
+| Bypass list | Renovate 用 GitHub App(`renovate-<org 名>`)を `For pull requests only` で追加(下記参照)<br/>開発者が 1 人だけの場合は「1.」の注意書きを参照 |
 | Target repositories | `All repositories`       |
 | Target branches | `Include default branch` |
 
@@ -135,7 +135,8 @@ Rules セクションで以下のチェックを外す:
 | Require conversation resolution before merging | ❌ |
 | Allowed merge methods | `Merge` / `Squash` / `Rebase`(すべて許可) |
 
-※ 承認が Required approvals にカウントされるのは write アクセス保持者のレビューのみ。PR 作成者本人による自己承認はできない。
+※ 承認が Required approvals にカウントされるのは write アクセス保持者のレビューのみ。PR 作成者本人による自己承認はできない。<br/>
+※ Renovate の更新 PR を承認なしで自動マージするため、Renovate 用 GitHub App を Bypass list に追加する。必須ワークフローのルールセット(2.3・2.4・2.7)には追加しないこと(失敗した検査を無視してマージされるようになる)
 
 </details>
 
@@ -269,7 +270,7 @@ ghalint.yaml
 |:-------:|:-------------------------|
 | Ruleset Name | `🛠️ 検知ワークフロー変更の承認必須化`    |
 | Enforcement status | `Active`                 |
-| Bypass list | 空のまま<br/>承認者が 1 人だけの場合は「1.」の注意書きを参照 |
+| Bypass list | Renovate 用 GitHub App(`renovate-<org 名>`)を `For pull requests only` で追加(「✅ PR の承認を必須化」を参照)<br/>承認者が 1 人だけの場合は「1.」の注意書きを参照 |
 | Target repositories | `Select repositories` → `github-workflows` のみ |
 | Target branches | `Include default branch` |
 
