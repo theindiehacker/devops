@@ -29,31 +29,33 @@ jobs:
     # 実行中に届いた 2 件目以降の依頼が黙ってキャンセルされる
 
     # pwn request 対策。条件を緩めないこと
+    # CONTRIBUTOR も許可するのは、メンバーシップ非公開のメンバーが pull_request_review(_comment) の payload で
+    # CONTRIBUTOR になるため。書き込み権限は action 側でも API で確認される
     # closed / merged PR では action が PR ブランチではなく新規ブランチを作る経路に入るため open のみ
     if: >-
       (
         github.event_name == 'issue_comment' &&
         contains(github.event.comment.body, '@claude') &&
         github.event.comment.user.type != 'Bot' &&
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.comment.author_association) &&
         (!github.event.issue.pull_request || github.event.issue.state == 'open')
       ) || (
         github.event_name == 'pull_request_review_comment' &&
         contains(github.event.comment.body, '@claude') &&
         github.event.comment.user.type != 'Bot' &&
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.comment.author_association) &&
         github.event.pull_request.state == 'open'
       ) || (
         github.event_name == 'pull_request_review' &&
         contains(github.event.review.body, '@claude') &&
         github.event.review.user.type != 'Bot' &&
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association) &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.review.author_association) &&
         github.event.pull_request.state == 'open'
       ) || (
         github.event_name == 'issues' &&
         (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
         github.event.issue.user.type != 'Bot' &&
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.issue.author_association)
       )
 
     steps:
