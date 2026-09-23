@@ -218,6 +218,13 @@ jobs:
         shell: bash
         run: ruff format --check --diff
 
+      # bandit 相当の S ルールを、対象 repo の select / ignore に関わらず必ず検査する（--select が設定を上書きする）。
+      # 誤検知は # noqa: Sxxx か per-file-ignores で個別に外す。S101（assert）はテストで多用され誤検知が大半のため除く
+      - name: "🛡️ ruff security"
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: ruff check --no-fix --output-format=github --select S --ignore S101
+
   pyproject:
     name: "🚧 型・依存関係を検査 (${{ matrix.project }})"
     needs: detect
