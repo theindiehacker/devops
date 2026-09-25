@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "simple",
+  "include-component-in-tag": false,
+  "include-v-in-tag": true,
+  "initial-version": "1.0.0",
+  "bootstrap-sha": "a70bc054cc6d478e65bf1c724e547c273cec3c19",
+  "changelog-sections": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Bug Fixes" },
+    { "type": "revert", "section": "Reverts" }
+  ],
+  "packages": {
+    ".": {}
+  }
+}

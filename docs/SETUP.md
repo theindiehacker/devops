@@ -85,6 +85,7 @@ Organization ページ → Settings → Repository → Rulesets を選択し、�
 
 > ⚠️ **前提** : branch ruleset(2.1〜2.7)が保護するのは default branch のみ。リリースも default branch(main)のマージ済みコミットから行う運用を前提とする。
 > タグやリリースブランチを起点にデプロイする運用を導入する場合は、レビューを経ないコミットからタグを切れてしまうため、別途 tag ruleset / 対象ブランチの追加が必要。
+> 本リポジトリのリリースタグ(`v*`)の tag ruleset は「5.」で設定する。
 
 ### `New branch ruleset`
 
@@ -416,6 +417,7 @@ astral-sh/setup-uv@*,
 docker/setup-buildx-action@*,
 docker/build-push-action@*,
 dorny/paths-filter@*,
+googleapis/release-please-action@*,
 oven-sh/setup-bun@*,
 renovatebot/github-action@*
 ```
@@ -423,6 +425,7 @@ renovatebot/github-action@*
 ※ 各リポジトリが新しい外部 action を使う場合はこのリストへの追加が必要(SHA ピン留めは各ワークフロー側で行う)。<br/>
 ※ `oven-sh/setup-bun` は `anthropics/claude-code-action` が内部で使用する action のため併せて許可する(「4.」)。<br/>
 ※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `python.yml` が使用する。<br/>
+※ `googleapis/release-please-action` は本リポジトリの `release-please.yml` が使用する(「5.」)。<br/>
 ※ `actions/create-github-app-token` は「Allow actions created by GitHub」で許可済みのため個別登録は不要。
 
 </details>
@@ -456,6 +459,18 @@ Claude Code を GitHub 上から呼び出す reusable workflow を使うため�
 - `@claude` の判定は部分一致のため、`@claude-bot` や `foo@claude.ai` でも job は起動する。action 側で完全一致しないと判定された場合は何も投稿されずに終わる
 - `claude.yml` は Issue から呼ぶと `claude/` 始まりのブランチに実装を push し、PR 作成リンクをコメントする(PR 自体は人が作成する)
 
+**呼び出し側の参照の書き方** : リリースタグ(「5.」)のコミット SHA で固定し、行末にタグ名をコメントで書く。
+
+```yaml
+jobs:
+  code-review:
+    uses: theindiehacker/github-workflows/.github/workflows/claude-code-review.yml@<タグのコミット SHA>  # v1.0.0
+```
+
+- SHA は `git ls-remote https://github.com/theindiehacker/github-workflows 'refs/tags/v1.0.0^{}' 'refs/tags/v1.0.0'` で確認する(`^{}` の行があればそちら)
+- コメントがタグ名(`# vX.Y.Z`)の場合だけ、Renovate(`config:best-practices`)がタグと SHA を一緒に更新する。`@main` や `# main` の形では更新 PR が作られない
+- マイナー・パッチの更新は自動マージ、メジャーの更新はセキュリティチームのレビュー必須(組織共通の Renovate 設定)
+
 <details><summary><b>組織シークレットを登録する</b></summary>
 
 🔗 Organization → Settings → Secrets and variables → Actions → **New organization secret**
@@ -485,5 +500,114 @@ action はこの App のトークンで進捗コメントやインラインコ�
 |:----|:----|
 | `anthropics/claude-code-action` / `oven-sh/setup-bun` の実行許可 | 「3.」 Actions permissions |
 | `claude*.yml` の変更に security チームの承認を必須化 | 「2.」ルールセット「🛠️ 検知ワークフロー変更の承認必須化」(File patterns `.github/workflows/**` で自動的に対象) |
+
+</details>
+
+---
+## 5. 🏷️ リリースタグ
+
+呼び出し側が reusable workflow(「4.」)を `@<SHA>  # vX.Y.Z` で参照し、Renovate で更新できるようにするため、本リポジトリには semver のリリースタグを付ける。
+タグは `.github/workflows/release-please.yml`(release-please)が、main にマージされたコミットから作る。
+
+1. main へのマージのたびに、release-please がリリース PR(`chore(main): release X.Y.Z`)を作成・更新する(`CHANGELOG.md` と `.release-please-manifest.json` を更新)
+2. リリース PR をマージすると、タグ `vX.Y.Z` と GitHub Release が作られる
+3. 呼び出し側の Renovate が新しいタグを検出し、参照の更新 PR を作る
+
+<details><summary><b>バージョンの付け方とコミットメッセージ</b></summary>
+
+release-please は Conventional Commits のコミットからバージョンを決める。**squash merge では PR タイトルがコミットメッセージになるため、PR タイトルを以下の形にする。**
+
+| 区分 | 対象 | PR タイトル |
+|:----|:----|:----|
+| メジャー | 呼び出し側の変更が必要なもの(`on:`・job の `permissions`・`secrets`・`inputs` の追加や変更、トリガーのコメントの変更など) | `feat!: ...` / `fix!: ...`(または本文に `BREAKING CHANGE: ...`) |
+| マイナー | 呼び出し側の変更が不要な機能追加・挙動の変更(モデルの変更など) | `feat: ...` |
+| パッチ | 不具合の修正、action・ツールの更新 | `fix: ...` / `fix(deps): ...` |
+| リリースしない | ドキュメント・CI・リファクタリングなど、呼び出し側の挙動が変わらないもの | `docs:` / `chore:` / `ci:` / `refactor:` / `test:` など |
+
+- Conventional Commits の形でないコミットは release-please に無視される(リリースにも CHANGELOG にも入らない)
+- Renovate の更新 PR は `renovate.json` の `semanticCommits` 設定で `fix(deps): ...` になり、パッチリリースになる
+- merge commit で取り込むと、PR 内の各コミットのメッセージが使われる。形が揃っていない場合は squash merge にする
+- `v1.0.0` より前(`a70bc05` まで)の履歴は `release-please-config.json` の `bootstrap-sha` で対象外にしている
+
+</details>
+
+<details><summary><b>release-please 用の GitHub App を作成する</b></summary>
+
+`GITHUB_TOKEN` は「3.」の設定で PR を作れず、また `GITHUB_TOKEN` で作った PR では必須ワークフローが起動しないため、専用の GitHub App を使う。
+
+🔗 Organization → Settings → Developer settings → GitHub Apps → **New GitHub App**
+
+| 設定項目 | 値 |
+|:--------|:--|
+| GitHub App name | `release-please-<org 名>` |
+| Homepage URL | 本リポジトリの URL |
+| Webhook | `Active` のチェックを外す |
+| Repository permissions | `Contents: Read and write` / `Pull requests: Read and write` / `Issues: Read and write`(リリース PR のラベル付けに使う) |
+| Where can this GitHub App be installed? | `Only on this account` |
+
+1. 作成後、**Generate a private key** で秘密鍵をダウンロードする
+2. **Install App** → Organization にインストールし、Repository access を `Only select repositories` → `github-workflows` のみにする
+3. 本リポジトリ → Settings → Secrets and variables → Actions に登録する
+
+| 種類 | Name | 値 |
+|:----|:-----|:--|
+| Variables | `RELEASE_PLEASE_APP_CLIENT_ID` | App の Client ID |
+| Secrets | `RELEASE_PLEASE_APP_PRIVATE_KEY` | ダウンロードした秘密鍵(`.pem`)の中身 |
+
+- ダウンロードした `.pem` はリポジトリに置かず、登録後に削除する
+- この App は「2.」のルールセットの Bypass list に**追加しない**(リリース PR も通常の PR と同じく承認・必須ワークフローを通す)
+
+</details>
+
+<details><summary><b>タグを変えられないようにする(tag ruleset)</b></summary>
+
+付けたタグが別のコミットに付け替えられると、`# vX.Y.Z` のコメントと実際の SHA がずれ、Renovate の更新も壊れる。
+また、レビューを経ないコミットにタグを付けられないよう、タグの作成は release-please の App だけに許す。
+Bypass list はルールセット単位のため、**作成の制限**と**更新・削除の禁止**を別のルールセットに分ける。
+
+🔗 Organization → Settings → Repository → Rulesets → **New ruleset** → **New tag ruleset**
+
+**「🏷️ リリースタグの作成制限」**
+
+| 設定項目 | 値 |
+|:-------:|:--|
+| Ruleset Name | `🏷️ リリースタグの作成制限` |
+| Enforcement status | `Active` |
+| Bypass list | release-please 用 GitHub App(`release-please-<org 名>`)を `Always allow` で追加 |
+| Target repositories | `Select repositories` → `github-workflows` のみ |
+| Target tags | `Include by pattern` → `v*` |
+
+Rules セクションで以下だけにチェック:
+
+- ✅ Restrict creations
+
+**「🔒 リリースタグの変更禁止」**
+
+| 設定項目 | 値 |
+|:-------:|:--|
+| Ruleset Name | `🔒 リリースタグの変更禁止` |
+| Enforcement status | `Active` |
+| Bypass list | 空のまま |
+| Target repositories | `Select repositories` → `github-workflows` のみ |
+| Target tags | `Include by pattern` → `v*` |
+
+Rules セクションで以下にチェック:
+
+- ✅ Restrict updates
+- ✅ Restrict deletions
+- ✅ Block force pushes
+
+※ 誤ったタグを付けた場合も付け替えず、修正を入れた次のバージョンを出す。
+
+</details>
+
+<details><summary><b>Immutable releases を有効にする</b></summary>
+
+🔗 本リポジトリ → Settings → General → Releases
+
+- ✅ **Enable release immutability**
+
+公開済みの GitHub Release のタグとアセットを変更・削除できなくなる(有効化より前に作った Release には適用されない)。tag ruleset と合わせて、リリースタグが指すコミットを固定する。
+最初のリリース(`v1.0.0`)の前に有効にしておく。
 
 </details>
