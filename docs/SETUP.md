@@ -507,11 +507,17 @@ action はこの App のトークンで進捗コメントやインラインコ�
 ## 5. 🏷️ リリースタグ
 
 呼び出し側が reusable workflow(「4.」)を `@<SHA>  # vX.Y.Z` で参照し、Renovate で更新できるようにするため、本リポジトリには semver のリリースタグを付ける。
-タグは `.github/workflows/release-please.yml`(release-please)が、main にマージされたコミットから作る。
+タグは、リリースしたいタイミングで `.github/workflows/release-please.yml`(release-please)を手動実行して、main にマージされたコミットから作る。
 
-1. main へのマージのたびに、release-please がリリース PR(`chore(main): release X.Y.Z`)を作成・更新する(`CHANGELOG.md` と `.release-please-manifest.json` を更新)
-2. リリース PR をマージすると、タグ `vX.Y.Z` と GitHub Release が作られる
-3. 呼び出し側の Renovate が新しいタグを検出し、参照の更新 PR を作る
+🔗 本リポジトリ → Actions → **🏷️ Release Please** → **Run workflow**(Branch は `main`)
+
+1. 実行すると、前回のリリース以降のコミットからリリース PR(`chore(main): release X.Y.Z`)を作成・更新する(`CHANGELOG.md` と `.release-please-manifest.json` を更新)
+2. リリース PR の内容(バージョン・CHANGELOG)を確認してマージする
+3. もう一度実行すると、マージ済みのリリース PR からタグ `vX.Y.Z` と GitHub Release が作られる
+4. 呼び出し側の Renovate が新しいタグを検出し、参照の更新 PR を作る
+
+- リリース PR は自動では更新されない。マージ前に main へ変更が入った場合は、再実行してリリース PR を更新してからマージする
+- `main` 以外のブランチを選んで実行した場合、job は skip される
 
 <details><summary><b>バージョンの付け方とコミットメッセージ</b></summary>
 

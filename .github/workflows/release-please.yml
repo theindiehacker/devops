@@ -1,11 +1,10 @@
 name: "🏷️ Release Please"
 
-# main へのマージから、reusable workflow を参照するためのリリースタグ (vX.Y.Z) を作る。
-# Conventional Commits のコミットを集めてリリース PR を作り、その PR のマージでタグと GitHub Release を作る。
-# バージョンの付け方は docs/SETUP.md の「5.」を参照。
+# reusable workflow を参照するためのリリースタグ (vX.Y.Z) を、手動実行で作る。
+# 実行すると main の Conventional Commits からリリース PR を作成・更新し、リリース PR のマージ後に
+# もう一度実行するとタグと GitHub Release を作る。手順とバージョンの付け方は docs/SETUP.md の「5.」を参照。
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions: {}
 
@@ -20,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions: {}
+    # 実行ブランチは選べるため、main 以外からの実行ではトークンを発行しない
+    if: github.ref == 'refs/heads/main'
     steps:
       # GITHUB_TOKEN は org 設定で PR を作れず、作れても PR で必須ワークフローが起動しないため App トークンを使う
       - name: "App トークン発行"
@@ -38,5 +39,6 @@ jobs:
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7  # v5.0.0
         with:
           token: ${{ steps.app-token.outputs.token }}
+          target-branch: main
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
