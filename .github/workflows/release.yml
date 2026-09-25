@@ -23,26 +23,15 @@ jobs:
     name: "リリースタグの作成"
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions: {}
-    # App の秘密鍵は main だけが使える Environment に置く。実行するのは選んだブランチ上の本ファイルのため、
-    # 下の if は別ブランチで書き換えられる。if は誤操作の防止のみで、鍵の保護は Environment で行う
-    environment: release
+    permissions:
+      contents: write # タグと GitHub Release の作成
+    # 別ブランチを選んだ誤操作の防止。main 以外でも書き換えれば外せるため、タグの作成を main に限る保護ではない
     if: github.ref == 'refs/heads/main'
     steps:
-      # タグの作成は tag ruleset で App だけに許しているため、GITHUB_TOKEN ではなく App トークンを使う
-      - name: "App トークン発行"
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
-        with:
-          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: write
-
       - name: "タグと GitHub Release を作成"
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           BUMP: ${{ inputs.bump }}
           TARGET_SHA: ${{ github.sha }}

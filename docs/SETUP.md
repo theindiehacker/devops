@@ -423,8 +423,7 @@ renovatebot/github-action@*
 
 ※ 各リポジトリが新しい外部 action を使う場合はこのリストへの追加が必要(SHA ピン留めは各ワークフロー側で行う)。<br/>
 ※ `oven-sh/setup-bun` は `anthropics/claude-code-action` が内部で使用する action のため併せて許可する(「4.」)。<br/>
-※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `python.yml` が使用する。<br/>
-※ `actions/create-github-app-token` は「Allow actions created by GitHub」で許可済みのため個別登録は不要。
+※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `python.yml` が使用する。
 
 </details>
 
@@ -522,64 +521,14 @@ action はこの App のトークンで進捗コメントやインラインコ�
 - タグがまだ無い場合は、`bump` に関係なく `v1.0.0` になる
 - main の先頭にすでにタグが付いている場合は、何も作らずに失敗で終わる(新しい変更をマージしてから実行し直す)
 - `main` 以外のブランチを選んだ場合は job が skip される
+- タグは `GITHUB_TOKEN` で作るため、タグの作成は制限していない。write 権限を持つメンバーは、ワークフローの書き換えや直接の push でレビューを経ないコミットにもタグを付けられる(呼び出し側ではマイナー・パッチの更新が自動マージされる)。write 権限は信頼できるメンバーだけに付与する
 - 実行は 1 回ずつ行う。実行中に続けて 2 回以上実行すると、待機中の実行は最後の 1 回に置き換えられる
-
-<details><summary><b>リリース用の GitHub App を作成する</b></summary>
-
-タグの作成を tag ruleset でこの App だけに許すため(下記)、`GITHUB_TOKEN` ではなく専用の GitHub App で作る。
-
-🔗 Organization → Settings → Developer settings → GitHub Apps → **New GitHub App**
-
-| 設定項目 | 値 |
-|:--------|:--|
-| GitHub App name | `release-<org 名>` |
-| Homepage URL | 本リポジトリの URL |
-| Webhook | `Active` のチェックを外す |
-| Repository permissions | `Contents: Read and write` のみ |
-| Where can this GitHub App be installed? | `Only on this account` |
-
-1. 作成後、**Generate a private key** で秘密鍵をダウンロードする
-2. **Install App** → Organization にインストールし、Repository access を `Only select repositories` → `github-workflows` のみにする
-3. 本リポジトリ → Settings → Environments → **New environment** で `release` を作成する
-
-| 設定項目 | 値 |
-|:--------|:--|
-| Deployment branches and tags | `Selected branches and tags` → `main` のみ追加 |
-
-4. 作成した Environment `release` に登録する(**リポジトリのシークレットには登録しない**)
-
-| 種類 | Name | 値 |
-|:----|:-----|:--|
-| Environment variables | `RELEASE_APP_CLIENT_ID` | App の Client ID |
-| Environment secrets | `RELEASE_APP_PRIVATE_KEY` | ダウンロードした秘密鍵(`.pem`)の中身 |
-
-- 実行されるのは選んだブランチ上の `release.yml` のため、main 以外のブランチで書き換えられると `if:` の判定は外せる。秘密鍵を main だけが使える Environment に置くことで、レビューを経ないコミットへのタグ付けを防ぐ
-- ダウンロードした `.pem` はリポジトリに置かず、登録後に削除する
-- この App は「2.」のルールセットの Bypass list に**追加しない**
-
-</details>
 
 <details><summary><b>タグを変えられないようにする(tag ruleset)</b></summary>
 
-付けたタグが別のコミットに付け替えられると、`# vX.Y.Z` のコメントと実際の SHA がずれ、Renovate の更新も壊れる。
-また、レビューを経ないコミットにタグを付けられないよう、タグの作成はリリース用の App(`release.yml`)だけに許す。
-Bypass list はルールセット単位のため、**作成の制限**と**更新・削除の禁止**を別のルールセットに分ける。
+付けたタグが別のコミットに付け替えられると、`# vX.Y.Z` のコメントと実際の SHA がずれ、Renovate の更新も壊れるため、タグの更新・削除を禁止する。
 
 🔗 Organization → Settings → Repository → Rulesets → **New ruleset** → **New tag ruleset**
-
-**「🏷️ リリースタグの作成制限」**
-
-| 設定項目 | 値 |
-|:-------:|:--|
-| Ruleset Name | `🏷️ リリースタグの作成制限` |
-| Enforcement status | `Active` |
-| Bypass list | リリース用 GitHub App(`release-<org 名>`)を `Always allow` で追加 |
-| Target repositories | `Select repositories` → `github-workflows` のみ |
-| Target tags | `Include by pattern` → `v*` |
-
-Rules セクションで以下だけにチェック:
-
-- ✅ Restrict creations
 
 **「🔒 リリースタグの変更禁止」**
 
