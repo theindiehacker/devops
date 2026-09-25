@@ -1,6 +1,5 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "semanticCommits": "enabled",
   "customManagers": [
     {
       "description": "ツール導入 step の VERSION と SHA256 を更新する（SHA256 は release アセットの digest から算出される）。VERSION は引用符付きでも取れる。VERSION には GitHub release のタグ名そのもの（v1.2.3 / bun-v1.2.3 など）を書く。github-release-attachments の digest 解決は VERSION の値でタグを検索するため、extractVersion で v を剥がすと 404 になる（renovatebot/renovate#45674）。versioningTemplate は semver のため、タグが vX.Y.Z 形式でないツールは Bun のように packageRules で versioning を上書きすること（semver として解釈できないタグは invalid-value で黙ってスキップされ、エラーも PR も出ない）",
@@ -23,11 +22,6 @@
     }
   ],
   "packageRules": [
-    {
-      "description": "action・ツールの更新は呼び出し側の変更が不要なため、release-please がパッチリリースにする fix(deps): で作る（docs/SETUP.md「5.」）。config:recommended の :semanticPrefixFixDepsChoreOthers が packageRules で chore にするため、トップレベルではなく packageRules で上書きする",
-      "matchPackageNames": ["*"],
-      "semanticCommitType": "fix"
-    },
     {
       "description": "Bun のリリースタグは bun-v プレフィックス付きで semver として解釈できないため、regex versioning でバージョンを読み取る（canary 等の非リリースタグは除外される）",
       "matchPackageNames": ["oven-sh/bun"],

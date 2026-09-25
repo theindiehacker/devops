@@ -417,7 +417,6 @@ astral-sh/setup-uv@*,
 docker/setup-buildx-action@*,
 docker/build-push-action@*,
 dorny/paths-filter@*,
-googleapis/release-please-action@*,
 oven-sh/setup-bun@*,
 renovatebot/github-action@*
 ```
@@ -425,7 +424,6 @@ renovatebot/github-action@*
 ※ 各リポジトリが新しい外部 action を使う場合はこのリストへの追加が必要(SHA ピン留めは各ワークフロー側で行う)。<br/>
 ※ `oven-sh/setup-bun` は `anthropics/claude-code-action` が内部で使用する action のため併せて許可する(「4.」)。<br/>
 ※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `python.yml` が使用する。<br/>
-※ `googleapis/release-please-action` は本リポジトリの `release-please.yml` が使用する(「5.」)。<br/>
 ※ `actions/create-github-app-token` は「Allow actions created by GitHub」で許可済みのため個別登録は不要。
 
 </details>
@@ -507,48 +505,35 @@ action はこの App のトークンで進捗コメントやインラインコ�
 ## 5. 🏷️ リリースタグ
 
 呼び出し側が reusable workflow(「4.」)を `@<SHA>  # vX.Y.Z` で参照し、Renovate で更新できるようにするため、本リポジトリには semver のリリースタグを付ける。
-タグは、リリースしたいタイミングで `.github/workflows/release-please.yml`(release-please)を手動実行して、main にマージされたコミットから作る。
 
-🔗 本リポジトリ → Actions → **🏷️ Release Please** → **Run workflow**(Branch は `main`)
+**リリースの手順** : 🔗 本リポジトリ → Actions → **🏷️ Release** → **Run workflow**
 
-1. 実行すると、前回のリリース以降のコミットからリリース PR(`chore(main): release X.Y.Z`)を作成・更新する(`CHANGELOG.md` と `.release-please-manifest.json` を更新)
-2. リリース PR の内容(バージョン・CHANGELOG)を確認してマージする
-3. もう一度実行すると、マージ済みのリリース PR からタグ `vX.Y.Z` と GitHub Release が作られる
-4. 呼び出し側の Renovate が新しいタグを検出し、参照の更新 PR を作る
+1. Branch は `main` のまま、`bump` で上げるバージョン(下表)を選んで実行する
+2. main の先頭のコミットに、次のバージョンのタグ `vX.Y.Z` と GitHub Release(リリースノートは前回のタグ以降の PR から自動生成)が作られる
+3. 呼び出し側の Renovate が新しいタグを検出し、参照の更新 PR を作る
 
-- リリース PR は自動では更新されない。マージ前に main へ変更が入った場合は、再実行してリリース PR を更新してからマージする
-- `main` 以外のブランチを選んで実行した場合、job は skip される
+| bump | 対象 |
+|:----|:----|
+| `major` | 呼び出し側の変更が必要なもの(`on:`・job の `permissions`・`secrets`・`inputs` の追加や変更、トリガーのコメントの変更など) |
+| `minor` | 呼び出し側の変更が不要な機能追加・挙動の変更(モデルの変更など) |
+| `patch` | 不具合の修正、action・ツールの更新 |
 
-<details><summary><b>バージョンの付け方とコミットメッセージ</b></summary>
+- 前回のリリース以降に入った変更のうち、いちばん大きい区分を選ぶ。呼び出し側の挙動が変わらない変更(ドキュメントなど)だけならリリースしない
+- タグがまだ無い場合は、`bump` に関係なく `v1.0.0` になる
+- main の先頭にすでにタグが付いている場合、`main` 以外のブランチを選んだ場合は何も作らない
 
-release-please は Conventional Commits のコミットからバージョンを決める。**squash merge では PR タイトルがコミットメッセージになるため、PR タイトルを以下の形にする。**
+<details><summary><b>リリース用の GitHub App を作成する</b></summary>
 
-| 区分 | 対象 | PR タイトル |
-|:----|:----|:----|
-| メジャー | 呼び出し側の変更が必要なもの(`on:`・job の `permissions`・`secrets`・`inputs` の追加や変更、トリガーのコメントの変更など) | `feat!: ...` / `fix!: ...`(または本文に `BREAKING CHANGE: ...`) |
-| マイナー | 呼び出し側の変更が不要な機能追加・挙動の変更(モデルの変更など) | `feat: ...` |
-| パッチ | 不具合の修正、action・ツールの更新 | `fix: ...` / `fix(deps): ...` |
-| リリースしない | ドキュメント・CI・リファクタリングなど、呼び出し側の挙動が変わらないもの | `docs:` / `chore:` / `ci:` / `refactor:` / `test:` など |
-
-- Conventional Commits の形でないコミットは release-please に無視される(リリースにも CHANGELOG にも入らない)
-- Renovate の更新 PR は `renovate.json` の `semanticCommits` 設定で `fix(deps): ...` になり、パッチリリースになる
-- merge commit で取り込むと、PR 内の各コミットのメッセージが使われる。形が揃っていない場合は squash merge にする
-- `v1.0.0` より前(`a70bc05` まで)の履歴は `release-please-config.json` の `bootstrap-sha` で対象外にしている
-
-</details>
-
-<details><summary><b>release-please 用の GitHub App を作成する</b></summary>
-
-`GITHUB_TOKEN` は「3.」の設定で PR を作れず、また `GITHUB_TOKEN` で作った PR では必須ワークフローが起動しないため、専用の GitHub App を使う。
+タグの作成を tag ruleset でこの App だけに許すため(下記)、`GITHUB_TOKEN` ではなく専用の GitHub App で作る。
 
 🔗 Organization → Settings → Developer settings → GitHub Apps → **New GitHub App**
 
 | 設定項目 | 値 |
 |:--------|:--|
-| GitHub App name | `release-please-<org 名>` |
+| GitHub App name | `release-<org 名>` |
 | Homepage URL | 本リポジトリの URL |
 | Webhook | `Active` のチェックを外す |
-| Repository permissions | `Contents: Read and write` / `Pull requests: Read and write` / `Issues: Read and write`(リリース PR のラベル付けに使う) |
+| Repository permissions | `Contents: Read and write` のみ |
 | Where can this GitHub App be installed? | `Only on this account` |
 
 1. 作成後、**Generate a private key** で秘密鍵をダウンロードする
@@ -557,18 +542,18 @@ release-please は Conventional Commits のコミットからバージョンを�
 
 | 種類 | Name | 値 |
 |:----|:-----|:--|
-| Variables | `RELEASE_PLEASE_APP_CLIENT_ID` | App の Client ID |
-| Secrets | `RELEASE_PLEASE_APP_PRIVATE_KEY` | ダウンロードした秘密鍵(`.pem`)の中身 |
+| Variables | `RELEASE_APP_CLIENT_ID` | App の Client ID |
+| Secrets | `RELEASE_APP_PRIVATE_KEY` | ダウンロードした秘密鍵(`.pem`)の中身 |
 
 - ダウンロードした `.pem` はリポジトリに置かず、登録後に削除する
-- この App は「2.」のルールセットの Bypass list に**追加しない**(リリース PR も通常の PR と同じく承認・必須ワークフローを通す)
+- この App は「2.」のルールセットの Bypass list に**追加しない**
 
 </details>
 
 <details><summary><b>タグを変えられないようにする(tag ruleset)</b></summary>
 
 付けたタグが別のコミットに付け替えられると、`# vX.Y.Z` のコメントと実際の SHA がずれ、Renovate の更新も壊れる。
-また、レビューを経ないコミットにタグを付けられないよう、タグの作成は release-please の App だけに許す。
+また、レビューを経ないコミットにタグを付けられないよう、タグの作成はリリース用の App(`release.yml`)だけに許す。
 Bypass list はルールセット単位のため、**作成の制限**と**更新・削除の禁止**を別のルールセットに分ける。
 
 🔗 Organization → Settings → Repository → Rulesets → **New ruleset** → **New tag ruleset**
@@ -579,7 +564,7 @@ Bypass list はルールセット単位のため、**作成の制限**と**更�
 |:-------:|:--|
 | Ruleset Name | `🏷️ リリースタグの作成制限` |
 | Enforcement status | `Active` |
-| Bypass list | release-please 用 GitHub App(`release-please-<org 名>`)を `Always allow` で追加 |
+| Bypass list | リリース用 GitHub App(`release-<org 名>`)を `Always allow` で追加 |
 | Target repositories | `Select repositories` → `github-workflows` のみ |
 | Target tags | `Include by pattern` → `v*` |
 
