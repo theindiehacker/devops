@@ -538,13 +538,20 @@ action はこの App のトークンで進捗コメントやインラインコ�
 
 1. 作成後、**Generate a private key** で秘密鍵をダウンロードする
 2. **Install App** → Organization にインストールし、Repository access を `Only select repositories` → `github-workflows` のみにする
-3. 本リポジトリ → Settings → Secrets and variables → Actions に登録する
+3. 本リポジトリ → Settings → Environments → **New environment** で `release` を作成する
+
+| 設定項目 | 値 |
+|:--------|:--|
+| Deployment branches and tags | `Selected branches and tags` → `main` のみ追加 |
+
+4. 作成した Environment `release` に登録する(**リポジトリのシークレットには登録しない**)
 
 | 種類 | Name | 値 |
 |:----|:-----|:--|
-| Variables | `RELEASE_APP_CLIENT_ID` | App の Client ID |
-| Secrets | `RELEASE_APP_PRIVATE_KEY` | ダウンロードした秘密鍵(`.pem`)の中身 |
+| Environment variables | `RELEASE_APP_CLIENT_ID` | App の Client ID |
+| Environment secrets | `RELEASE_APP_PRIVATE_KEY` | ダウンロードした秘密鍵(`.pem`)の中身 |
 
+- 実行されるのは選んだブランチ上の `release.yml` のため、main 以外のブランチで書き換えられると `if:` の判定は外せる。秘密鍵を main だけが使える Environment に置くことで、レビューを経ないコミットへのタグ付けを防ぐ
 - ダウンロードした `.pem` はリポジトリに置かず、登録後に削除する
 - この App は「2.」のルールセットの Bypass list に**追加しない**
 

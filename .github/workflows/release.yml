@@ -24,7 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
-    # 実行ブランチは選べるため、main 以外からの実行ではトークンを発行しない
+    # App の秘密鍵は main だけが使える Environment に置く。実行するのは選んだブランチ上の本ファイルのため、
+    # 下の if は別ブランチで書き換えられる。if は誤操作の防止のみで、鍵の保護は Environment で行う
+    environment: release
     if: github.ref == 'refs/heads/main'
     steps:
       # タグの作成は tag ruleset で App だけに許しているため、GITHUB_TOKEN ではなく App トークンを使う
