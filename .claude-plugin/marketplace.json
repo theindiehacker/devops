@@ -6,6 +6,7 @@
     "email": "gtaiyou24@gmail.com",
     "url": "https://github.com/theindiehacker"
   },
+  "allowCrossMarketplaceDependenciesOn": ["claude-plugins-official"],
   "plugins": [
     {
       "name": "dev",
