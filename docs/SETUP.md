@@ -446,10 +446,11 @@ Claude Code を GitHub 上から呼び出す reusable workflow を使うため�
 
 | ワークフロー | 呼び出し方 | 呼び出し側の `on:` | 呼び出し側の job `permissions` |
 |:----|:----|:----|:----|
-| `claude-code-review.yml` | PR に `/code-review` とコメント | `issue_comment: [created]` | `contents: read` / `pull-requests: write` / `issues: write` / `id-token: write` |
+| `claude-code-review.yml` | PR に `/code-review` とコメント | `issue_comment: [created]` | `contents: read` / `actions: read` / `pull-requests: write` / `issues: write` / `id-token: write` |
 | `claude-security-review.yml` | PR に `/security-review` とコメント | `issue_comment: [created]` | 同上 |
-| `claude.yml` | Issue のタイトル・本文、Issue / PR のコメント・レビューで `@claude` にメンション(質問への回答・実装・ブランチへの push) | `issue_comment: [created]`<br/>`pull_request_review_comment: [created]`<br/>`pull_request_review: [submitted]`<br/>`issues: [opened]` | `contents: write` / `pull-requests: write` / `issues: write` / `id-token: write` |
+| `claude.yml` | Issue のタイトル・本文、Issue / PR のコメント・レビューで `@claude` にメンション(質問への回答・実装・ブランチへの push) | `issue_comment: [created]`<br/>`pull_request_review_comment: [created]`<br/>`pull_request_review: [submitted]`<br/>`issues: [opened]` | `contents: write` / `actions: read` / `pull-requests: write` / `issues: write` / `id-token: write` |
 
+- `actions: read` は claude-code-action が CI 状況を確認するために使う。呼び出し側で与えないと呼び出し先の job が起動しない
 - いずれも `OWNER` / `MEMBER` / `COLLABORATOR` のコメントにだけ反応し、PR は open のものに限る
 - 本リポジトリでは `.github/workflows/self-claude.yml` からローカル参照(`uses: ./.github/workflows/...`)で呼び出す
 - PR 本文の `@claude` では起動しない(`pull_request` トリガーは fork PR の扱いが増えるため持たない)

@@ -20,6 +20,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      # claude-code-action の CI 状況確認 (github_ci MCP) に必要
+      actions: read
       pull-requests: write
       # 進捗コメントの更新は issue comments API 経由なので残す
       issues: write

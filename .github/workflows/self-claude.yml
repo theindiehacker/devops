@@ -19,6 +19,7 @@ jobs:
     if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/code-review')
     permissions:
       contents: read
+      actions: read
       pull-requests: write
       issues: write
       id-token: write
@@ -33,6 +34,7 @@ jobs:
     if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/security-review')
     permissions:
       contents: read
+      actions: read
       pull-requests: write
       issues: write
       id-token: write
@@ -44,6 +46,7 @@ jobs:
   claude:
     permissions:
       contents: write
+      actions: read
       pull-requests: write
       issues: write
       id-token: write

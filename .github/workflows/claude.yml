@@ -21,6 +21,8 @@ jobs:
     permissions:
       # 実装結果をブランチに push するため write
       contents: write
+      # claude-code-action の CI 状況確認 (github_ci MCP) に必要
+      actions: read
       pull-requests: write
       issues: write
       id-token: write
