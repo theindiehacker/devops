@@ -465,61 +465,11 @@ https://github.com/apps/claude を Organization にインストールし、Repos
 git ls-remote https://github.com/theindiehacker/github-workflows 'refs/tags/v1.0.0^{}' 'refs/tags/v1.0.0'
 ```
 
-2. `.github/workflows/claude.yml` を作成し、`<SHA>` と `# v1.0.0` を 1. の値に置き換える
+2. [`.github/workflows/self-claude.yml`](../.github/workflows/self-claude.yml) を `.github/workflows/claude.yml` としてコピーし、各 job の `uses:` を 1. の値で書き換える
 
-```yaml
-name: "🧠 Claude"
-
-on:
-  issue_comment:
-    types: [created]
-  pull_request_review_comment:
-    types: [created]
-  pull_request_review:
-    types: [submitted]
-  issues:
-    types: [opened]
-
-permissions: {}
-
-jobs:
-  code-review:
-    if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/code-review')
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: write
-      issues: write
-      id-token: write
-    uses: theindiehacker/github-workflows/.github/workflows/claude-code-review.yml@<SHA>  # v1.0.0
-    secrets:
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-
-  security-review:
-    if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/security-review')
-    permissions:
-      contents: read
-      actions: read
-      pull-requests: write
-      issues: write
-      id-token: write
-    uses: theindiehacker/github-workflows/.github/workflows/claude-security-review.yml@<SHA>  # v1.0.0
-    secrets:
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-
-  claude:
-    permissions:
-      contents: write
-      actions: read
-      pull-requests: write
-      issues: write
-      id-token: write
-    uses: theindiehacker/github-workflows/.github/workflows/claude.yml@<SHA>  # v1.0.0
-    secrets:
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```diff
+-    uses: ./.github/workflows/claude-code-review.yml
++    uses: theindiehacker/github-workflows/.github/workflows/claude-code-review.yml@<SHA>  # v1.0.0
 ```
 
 3. main にマージ後、PR に `/code-review` とコメントしてレビューが投稿されることを確認する
