@@ -442,64 +442,37 @@ renovatebot/github-action@*
 ---
 ## 4. 🧠 Claude ワークフロー
 
-Claude Code を GitHub 上から呼び出す reusable workflow を使うための設定。
-
-| ワークフロー | 呼び出し方 | 呼び出し側の `on:` | 呼び出し側の job `permissions` |
-|:----|:----|:----|:----|
-| `claude-code-review.yml` | PR に `/code-review` とコメント | `issue_comment: [created]` | `contents: read` / `actions: read` / `pull-requests: write` / `issues: write` / `id-token: write` |
-| `claude-security-review.yml` | PR に `/security-review` とコメント | `issue_comment: [created]` | 同上 |
-| `claude.yml` | Issue のタイトル・本文、Issue / PR のコメント・レビューで `@claude` にメンション(質問への回答・実装・ブランチへの push) | `issue_comment: [created]`<br/>`pull_request_review_comment: [created]`<br/>`pull_request_review: [submitted]`<br/>`issues: [opened]` | `contents: write` / `actions: read` / `pull-requests: write` / `issues: write` / `id-token: write` |
-
-- `actions: read` は claude-code-action が CI 状況を確認するために使う。呼び出し側で与えないと呼び出し先の job が起動しない
-- いずれも `OWNER` / `MEMBER` / `COLLABORATOR` のコメントにだけ反応し、PR は open のものに限る
-- 本リポジトリでは `.github/workflows/self-claude.yml` からローカル参照(`uses: ./.github/workflows/...`)で呼び出す
-- PR 本文の `@claude` では起動しない(`pull_request` トリガーは fork PR の扱いが増えるため持たない)
-- `@claude` の判定は部分一致のため、`@claude-bot` や `foo@claude.ai` でも job は起動する。action 側で完全一致しないと判定された場合は何も投稿されずに終わる
-- `claude.yml` は Issue から呼ぶと `claude/` 始まりのブランチに実装を push し、PR 作成リンクをコメントする(PR 自体は人が作成する)
-
-**呼び出し側の参照の書き方** : リリースタグ(「5.」)のコミット SHA で固定し、行末にタグ名をコメントで書く。
-
-```yaml
-jobs:
-  code-review:
-    uses: theindiehacker/github-workflows/.github/workflows/claude-code-review.yml@<タグのコミット SHA>  # v1.0.0
-```
-
-- SHA は `git ls-remote https://github.com/theindiehacker/github-workflows 'refs/tags/v1.0.0^{}' 'refs/tags/v1.0.0'` で確認する(`^{}` の行があればそちら)
-- コメントがタグ名(`# vX.Y.Z`)の場合だけ、Renovate(`config:best-practices`)がタグと SHA を一緒に更新する。`@main` や `# main` の形では更新 PR が作られない
-- マイナー・パッチの更新は自動マージ、メジャーの更新はセキュリティチームのレビュー必須(組織共通の Renovate 設定)
-
-<details><summary><b>組織シークレットを登録する</b></summary>
+### 4.1 組織シークレットを登録する
 
 🔗 Organization → Settings → Secrets and variables → Actions → **New organization secret**
+
+以下の**どちらか一方**を登録し、Repository access は `Private repositories` にする。public リポジトリにはリポジトリシークレットとしても登録しない(fork PR の差分経由でトークンを読み出される恐れがあるため)。
 
 | Name | 値 |
 |:-----|:--|
 | `CLAUDE_CODE_OAUTH_TOKEN` | `claude setup-token` で発行した OAuth トークン(Pro / Max プラン) |
 | `ANTHROPIC_API_KEY` | Anthropic API キー |
 
-- **どちらか一方のみ**登録する
-- Repository access は `Private repositories` にする。public リポジトリにもリポジトリシークレットとして登録しない
-  - public リポジトリでは fork からの PR にもメンバーのコメントでレビューが走り、PR の差分に仕込まれた指示で Claude にトークンを読み出させる経路が残るため
-  - シークレットを参照できないリポジトリでは実行が失敗し、進捗コメントに表示される
+### 4.2 Claude GitHub App をインストールする
 
-</details>
+https://github.com/apps/claude を Organization にインストールし、Repository access を `All repositories` にする。
 
-<details><summary><b>Claude GitHub App をインストールする</b></summary>
+### 4.3 各リポジトリに呼び出し側のワークフローを追加する
 
-https://github.com/apps/claude を Organization にインストールし、Repository access を `All repositories` にする(新規リポジトリも自動で対象)。
-action はこの App のトークンで進捗コメントやインラインコメントを投稿する。
+1. 最新のリリースタグ(例: `v1.0.0`)のコミット SHA を確認する(`^{}` の行があればそちらを使う)
 
-</details>
+```shell
+git ls-remote https://github.com/theindiehacker/github-workflows 'refs/tags/v1.0.0^{}' 'refs/tags/v1.0.0'
+```
 
-<details><summary><b>前提となる他の設定</b></summary>
+2. [`.github/workflows/self-claude.yml`](../.github/workflows/self-claude.yml) を `.github/workflows/claude.yml` としてコピーし、各 job の `uses:` を 1. の値で書き換える
 
-| 設定 | 参照 |
-|:----|:----|
-| `anthropics/claude-code-action` / `oven-sh/setup-bun` の実行許可 | 「3.」 Actions permissions |
-| `claude*.yml` の変更に security チームの承認を必須化 | 「2.」ルールセット「🛠️ 検知ワークフロー変更の承認必須化」(File patterns `.github/workflows/**` で自動的に対象) |
+```diff
+-    uses: ./.github/workflows/claude-code-review.yml
++    uses: theindiehacker/github-workflows/.github/workflows/claude-code-review.yml@<SHA>  # v1.0.0
+```
 
-</details>
+3. main にマージ後、PR に `/code-review` とコメントしてレビューが投稿されることを確認する
 
 ---
 ## 5. 🏷️ リリースタグ
