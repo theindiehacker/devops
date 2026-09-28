@@ -46,7 +46,7 @@ jobs:
       PR_NUMBER: ${{ github.event.issue.number }}
 
     steps:
-      - name: "🧠 モデル決定"
+      - name: "🧠 モデル・effort 決定"
         id: preflight
         shell: bash
         env:
@@ -55,12 +55,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          case "$COMMENT_BODY" in
-            '/code-review fable'*) model=claude-fable-5-1 ;;
-            *) model=claude-opus-5-5 ;;
-          esac
+          model=claude-opus-5-5
+          effort_arg=""
+
+          # read は 1 行目のみ読む (2 行目以降は署名フッター等)
+          read -ra words <<< "${COMMENT_BODY//$'\r'/}"
+          for word in "${words[@]:1}"; do
+            case "$word" in
+              fable) model=claude-fable-5-1 ;;
+              low|medium|high|xhigh|max) effort_arg="--effort $word" ;;
+            esac
+          done
+
           echo "model=$model" >> "$GITHUB_OUTPUT"
-          echo "レビューモデル: $model"
+          echo "effort_arg=$effort_arg" >> "$GITHUB_OUTPUT"
+          echo "レビューモデル: $model $effort_arg"
 
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -90,6 +99,7 @@ jobs:
           show_full_output: false
           claude_args: |
             --model ${{ steps.preflight.outputs.model }}
+            ${{ steps.preflight.outputs.effort_arg }}
             --max-turns 200
             --allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__github__create_and_submit_pull_request_review"
           # 判定レビューは Claude 自身に送信させる (指示は APPEND_SYSTEM_PROMPT)。action の Claude App
