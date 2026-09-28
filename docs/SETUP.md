@@ -446,7 +446,7 @@ renovatebot/github-action@*
 
 🔗 Organization → Settings → Secrets and variables → Actions → **New organization secret**
 
-以下の**どちらか一方**を登録し、Repository access は `Private repositories` にする。
+以下の**どちらか一方**を登録し、Repository access は `Private repositories` にする。public リポジトリにはリポジトリシークレットとしても登録しない(fork PR の差分経由でトークンを読み出される恐れがあるため)。
 
 | Name | 値 |
 |:-----|:--|
