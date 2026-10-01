@@ -14,6 +14,7 @@ user-invocable: false
 ## ルール
 
  - 活用できる公式のモジュールがあれば、積極的に活用すること
+   - [Google Cloud の Terraform ブループリントとモジュール](https://docs.cloud.google.com/docs/terraform/blueprints/terraform-blueprints.md.txt?hl=ja)
  - 公式推奨・業界標準・ベストプラクティスにすること
 
 **Google Cloud**:
