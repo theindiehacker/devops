@@ -90,7 +90,8 @@ CI の指摘（該当行へのインラインコメントとして投稿され�
 - `backend/src/**/*.py` の変更 → `ruleset:backend`（および索引 `ruleset:domain-model` から辿る domain / application の skill）
 - `backend/test/**/*.py` の変更 → `ruleset:backend-test`
 - `.github/**/*.yml` の変更 → `ruleset:github-workflows`
-- その他 (`infrastructure/` / マイグレーション / E2E) → `ruleset:infrastructure` / `ruleset:migration` / `ruleset:e2e`
+- `*.tf` / `*.hcl` の変更 → `ruleset:terraform`
+- その他 (マイグレーション / E2E) → `ruleset:migration` / `ruleset:e2e`
 
 ### 2. PR の存在確認
 
