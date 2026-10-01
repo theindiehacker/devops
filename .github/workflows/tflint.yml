@@ -52,25 +52,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: "Install tflint"
+      # checksums は release の zip の SHA-256。action がダウンロード後に検証する
+      - name: "Setup tflint"
         if: steps.filter.outputs.config == 'true' || steps.filter.outputs.terraform == 'true'
-        shell: bash
-        env:
+        uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337  # v6.3.2
+        with:
           # renovate: datasource=github-release-attachments depName=terraform-linters/tflint
-          VERSION: v0.64.0
-          SHA256: cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
-        run: |
-          set -euo pipefail
-          ARCHIVE="tflint_linux_amd64.zip"
-          curl -sSfL -o "$ARCHIVE" "https://github.com/terraform-linters/tflint/releases/download/${VERSION}/${ARCHIVE}"
-
-          # SHA-256 検証（改ざん・破損を検知）
-          echo "${SHA256}  ${ARCHIVE}" | sha256sum -c -
-
-          sudo unzip -o "$ARCHIVE" tflint -d /usr/local/bin
-          sudo chmod +x /usr/local/bin/tflint
-          rm -f "$ARCHIVE"
-          tflint --version
+          tflint_version: v0.64.0
+          checksums: cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
 
       - name: "tflint"
         if: steps.filter.outputs.config == 'true' || steps.filter.outputs.terraform == 'true'
@@ -83,6 +72,8 @@ jobs:
           TARGETS: ${{ steps.filter.outputs.terraform_files }}
         run: |
           set -euo pipefail
+          # 対象 repo 由来のパスで ::group:: の行を分けられないようエスケープする
+          escape() { local value=${1//%/%25}; value=${value//$'\r'/%0D}; printf '%s' "${value//$'\n'/%0A}"; }
 
           # lint はディレクトリ（モジュール）単位のため、変更ファイルをディレクトリに集約する。
           # .terraform はキャッシュ・vendored モジュール置き場のため lint 対象外
@@ -103,7 +94,7 @@ jobs:
           status=0
           while IFS= read -r dir; do
             if [ -z "${dir}" ]; then continue; fi
-            echo "::group::${dir}"
+            echo "::group::$(escape "${dir}")"
 
             # 設定は実行ディレクトリから repo ルートへ遡って最初に見つかったものを使う。
             # tflint が自動で読むのは --chdir 先の .tflint.hcl だけで、terraform/.tflint.hcl のように
@@ -122,19 +113,8 @@ jobs:
             done
 
             tflint --chdir="${dir}" "${args[@]}" --init
-            result="${RUNNER_TEMP}/tflint.json"
-            code=0
-            tflint --chdir="${dir}" "${args[@]}" --format=json > "${result}" || code=$?
-            if [ "${code}" -ne 0 ]; then status=1; fi
-
-            # 検出箇所を PR に annotation 表示する（filename は --chdir 実行でもリポジトリルート基準で出力される）
-            jq -r '
-              ((.issues // [])[]
-                | "::error file=\(.range.filename),line=\(.range.start.line)::tflint (\(.rule.name)): \(.message)"),
-              ((.errors // [])[]
-                | if .range then "::error file=\(.range.filename),line=\(.range.start.line)::tflint: \(.message)"
-                  else "::error::tflint: \(.message)" end)
-            ' "${result}"
+            # 結果は annotation にせず log に出す（既定の形式で、ファイル・行・ルール名と該当箇所が出る）
+            tflint --chdir="${dir}" "${args[@]}" || status=1
             echo "::endgroup::"
           done <<< "${dirs}"
           exit "${status}"

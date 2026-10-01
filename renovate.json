@@ -6,7 +6,7 @@
       "customType": "regex",
       "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.yml$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>[a-zA-Z0-9-._]+?) depName=(?<depName>[^\\s]+?)\\s+(?:[A-Z0-9_]+_)?VERSION:\\s*\"?(?<currentValue>[^\\s\"]+)\"?\\s+(?:[A-Z0-9_]+_)?SHA256:\\s*(?<currentDigest>\\S+)"
+        "# renovate: datasource=(?<datasource>[a-zA-Z0-9-._]+?) depName=(?<depName>[^\\s]+?)\\s+(?:(?:[A-Z0-9_]+_)?VERSION|[a-z0-9_]*_version):\\s*\"?(?<currentValue>[^\\s\"]+)\"?\\s+(?:(?:[A-Z0-9_]+_)?SHA256|checksums):\\s*(?<currentDigest>\\S+)"
       ],
       "versioningTemplate": "semver"
     },

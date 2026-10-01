@@ -1,0 +1,149 @@
+name: "🏗️ terraform"
+
+# Terraform の validate / test を行う（init が要るため、terraform-fmt.yml / tflint.yml とは分ける）。
+# 結果は annotation にせず log に出す（修正するのも log を読むのも Claude Code の前提）。
+#
+# ⚠️ 必須ワークフローは on: のフィルタが無視され全 PR で起動するため、対象の判定は job 内で行う
+#    （All repositories 適用のため、Terraform の変更が無い PR では skip し run は success にする）。
+# terraform init / test は PR に書かれた provider・module・data source を実行するため、
+# 権限は contents: read（と paths-filter 用の pull-requests: read）のみとし、secrets も使わない。
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read  # paths-filter の変更ファイル一覧取得に必要
+
+# 同一 PR に連投された run のみ束ねて追い越しキャンセル
+concurrency:
+  group: terraform-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: "Terraform を検査"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TF_IN_AUTOMATION: "1"
+      TF_INPUT: "0"
+      CHECKPOINT_DISABLE: "1"
+    steps:
+      - name: "検査の要否を判定"
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
+        with:
+          # 削除も対象（モジュールの削除で、それを呼ぶ examples が壊れる）
+          filters: |
+            terraform:
+              - "**/*.tf"
+              - "**/*.tf.json"
+              - "**/*.tftest.hcl"
+              - "**/*.tftest.json"
+              - "**/.terraform.lock.hcl"
+
+      - name: "Checkout"
+        if: steps.filter.outputs.terraform == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # 変更があったディレクトリではなく repo 全体を検査する（examples/ はモジュールを相対パスで呼ぶため、
+      # モジュールだけを変えた PR で examples が壊れても検知できるようにする）
+      - name: "検査対象を収集"
+        id: collect
+        if: steps.filter.outputs.terraform == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # git 管理下の *.tf / *.tf.json があるディレクトリ。.terraform はキャッシュ・vendored モジュール置き場のため対象外。
+          # dirs.txt は 1 行 1 ディレクトリのため、改行を含むパスは扱えない
+          git ls-files -z -- ':(glob)**/*.tf' ':(glob)**/*.tf.json' \
+            | while IFS= read -r -d '' f; do
+                if [[ "${f}" == *[$'\n\r']* ]]; then echo "::error::改行を含むパスは検査できません" >&2; exit 1; fi
+                if [[ "${f}" == */* ]]; then printf '%s\n' "${f%/*}"; else echo .; fi
+              done \
+            | { grep -Ev '(^|/)\.terraform(/|$)' || true; } \
+            | sort -u > "${RUNNER_TEMP}/dirs.txt"
+          # パスは対象 repo 由来のため、行頭に出してワークフローコマンドとして解釈されないよう "- " を付ける
+          sed 's/^/- /' "${RUNNER_TEMP}/dirs.txt"
+          if [ -s "${RUNNER_TEMP}/dirs.txt" ]; then
+            echo "found=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "found=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      # 版は repo の宣言を読まず中央で固定する（terraform-fmt.yml と揃える）
+      - name: "Setup terraform"
+        if: steps.collect.outputs.found == 'true'
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e  # v4.0.1
+        with:
+          terraform_version: "1.16.0"
+          terraform_wrapper: false
+
+      # provider は lock ファイルの checksum と一致したものだけが使われるため、キャッシュの中身は init 時に検証される
+      - name: "provider のキャッシュ"
+        if: steps.collect.outputs.found == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ${{ runner.temp }}/terraform-plugin-cache
+          key: terraform-plugins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: |
+            terraform-plugins-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: "terraform validate"
+        id: validate
+        if: steps.collect.outputs.found == 'true'
+        shell: bash
+        env:
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
+        run: |
+          set -euo pipefail
+          mkdir -p "${TF_PLUGIN_CACHE_DIR}"
+          # 改行を含むパスは収集時に拒否済みのため、::group:: のタイトルは % だけをエスケープすればよい。
+          # terraform（provider・external data source を含む）が stdin を読んでディレクトリ一覧を消費しないよう、< /dev/null で切り離す
+
+          : > "${RUNNER_TEMP}/initialized.txt"
+          status=0
+          while IFS= read -r dir; do
+            echo "::group::${dir//%/%25}"
+            # lock ファイルがあれば読み取り専用で使い、required_providers と合わなければ失敗させる
+            args=(-backend=false)
+            if [ -f "${dir}/.terraform.lock.hcl" ]; then args+=(-lockfile=readonly); fi
+
+            # init に失敗したディレクトリは validate しない（module・provider が未導入なことによる二次的なエラーしか出ない）。
+            # lock ファイルに無いハッシュ（多くは linux_amd64 のもの）を readonly のため追記できなかったときは、
+            # init は警告だけで成功するが provider を検証できないため失敗とする
+            if terraform -chdir="${dir}" init "${args[@]}" < /dev/null 2>&1 | tee "${RUNNER_TEMP}/init.log" \
+              && ! grep -q 'Provider lock file not updated' "${RUNNER_TEMP}/init.log"; then
+              printf '%s\n' "${dir}" >> "${RUNNER_TEMP}/initialized.txt"
+              terraform -chdir="${dir}" validate < /dev/null || status=1
+            else
+              status=1
+            fi
+            echo "::endgroup::"
+          done < "${RUNNER_TEMP}/dirs.txt"
+          exit "${status}"
+
+      - name: "terraform test"
+        # validate が失敗しても、init できたディレクトリのテストは実行する
+        if: ${{ !cancelled() && steps.validate.outcome != 'skipped' }}
+        shell: bash
+        env:
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          status=0
+          while IFS= read -r dir; do
+            # terraform test はモジュールのディレクトリで実行する。テストはその直下か tests/ に置かれる（terraform の既定）
+            tests=("${dir}"/{,tests/}*.tftest.{hcl,json})
+            if [ "${#tests[@]}" -eq 0 ]; then continue; fi
+            echo "::group::${dir//%/%25}"
+            # クラウドの認証情報は渡さないため、command = plan と mock_provider で完結するテストだけが通る
+            terraform -chdir="${dir}" test < /dev/null || status=1
+            echo "::endgroup::"
+          done < "${RUNNER_TEMP}/initialized.txt"
+          exit "${status}"

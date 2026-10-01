@@ -333,11 +333,18 @@ Rules セクションで以下のチェックを外す:
 | `github-workflows` | `main` | `.github/workflows/actionlint.yml` | ワークフロー定義の構文 |
 | `github-workflows` | `main` | `.github/workflows/tflint.yml` | Terraform の lint |
 | `github-workflows` | `main` | `.github/workflows/terraform-fmt.yml` | Terraform の書式 |
+| `github-workflows` | `main` | `.github/workflows/terraform.yml` | Terraform の validate・lock ファイルと `required_providers` の整合・test(`*.tftest.hcl`) |
 | `github-workflows` | `main` | `.github/workflows/shellcheck.yml` | シェルスクリプトの lint |
 | `github-workflows` | `main` | `.github/workflows/python.yml` | Python の規約(uv での依存管理)・lint・書式・セキュリティ(ruff の `S` ルール)・型・依存関係 |
 | `github-workflows` | `main` | `.github/workflows/typescript.yml` | TypeScript の規約(Bun での依存管理)・lint・書式・型・未使用パッケージ |
 
-> 必須ワークフローは対象 repo のコードを実行しない解析に揃える。`python.yml` と `typescript.yml` の検査だけが例外で、`uv sync` / `bun install` による依存導入と、その環境上で動く mypy(プラグインを含む) / lint-imports / deptry / Biome / knip / tsc が対象 repo のコードに触れる。
+> 必須ワークフローは、対象 repo のコードを実行してよい(`python.yml` / `typescript.yml` の `uv sync` / `bun install` による依存導入と、その環境上で動く mypy(プラグインを含む) / lint-imports / deptry / Biome / knip / tsc、`terraform.yml` の `terraform init` / `validate` / `test` が実行する provider・module など)。ただし次を守る。
+> - `permissions` は read のみとし、secrets を使わない。トリガーは `pull_request` とし、`pull_request_target` では動かさない
+> - `actions/checkout` は `persist-credentials: false` にする
+> - repo の環境に依存して失敗し得る前提は、下の「導入時の前提」に書く。対応できない repo は「例外運用」で外す
+>
+> この条件なら、PR のコードが動いても、その repo の通常の CI と同じで越えられる権限の境界は無い。
+>
 > 検査の対象や厳しさ、src レイアウトの自パッケージの解決は、対象 repo の設定ファイル(`mypy.ini` / `[tool.deptry]` / `[build-system]` / `biome.json` / `knip.json` / `tsconfig.json` など)に従う。
 
 **導入時の前提** : 次に当てはまる repo は、対応するまで必須チェックが fail する。
@@ -347,6 +354,9 @@ Rules セクションで以下のチェックを外す:
 3. `bun.lock` をコミットしていない(`bun install --frozen-lockfile` が失敗する)
 4. `@biomejs/biome` / `knip` / `typescript` を devDependencies に持たない(`package.json` がある repo のみ対象)
 5. ruff の `S` ルール(bandit 相当。`S101` を除く)に違反している(repo の `ignore` では外せない。誤検知は `# noqa: Sxxx` か `per-file-ignores` で個別に外す)
+6. `.terraform.lock.hcl` に linux_amd64 のハッシュが無い(`terraform init -lockfile=readonly` で provider を検証できない。`terraform providers lock -platform=linux_amd64 -platform=darwin_arm64` などで追記する)
+7. `terraform test` がクラウドの認証情報を必要とする(認証情報は渡さないため、`command = plan` と `mock_provider` で完結するテストだけが通る)
+8. Terraform 1.16.0(`terraform.yml` で固定)で動かない `required_version` を宣言している
 
 **例外運用** : ランナーで依存を導入できない repo(private index の認証が必要など)が出た場合だけ、その repo を `Bypass list` に追加するか、`Target repositories` を `Dynamic list by property` 等に変更して対象から外す。規約・lint・書式の検査も併せて外れる。
 
@@ -417,13 +427,16 @@ astral-sh/setup-uv@*,
 docker/setup-buildx-action@*,
 docker/build-push-action@*,
 dorny/paths-filter@*,
+hashicorp/setup-terraform@*,
 oven-sh/setup-bun@*,
-renovatebot/github-action@*
+renovatebot/github-action@*,
+terraform-linters/setup-tflint@*
 ```
 
 ※ 各リポジトリが新しい外部 action を使う場合はこのリストへの追加が必要(SHA ピン留めは各ワークフロー側で行う)。<br/>
 ※ `oven-sh/setup-bun` は `anthropics/claude-code-action` が内部で使用する action のため併せて許可する(「4.」)。<br/>
-※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `python.yml` が使用する。
+※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `python.yml` が使用する。<br/>
+※ `hashicorp/setup-terraform` は `terraform.yml` / `terraform-fmt.yml`、`terraform-linters/setup-tflint` は `tflint.yml` が使用する(「2.」の必須ワークフロー)。
 
 </details>
 
