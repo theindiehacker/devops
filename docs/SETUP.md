@@ -544,10 +544,11 @@ fmt / tflint / trivy は必須ワークフロー(2.)で実行済みのため、�
 | 検査 | 内容 |
 |:----|:----|
 | validate | 対象ディレクトリごとに `terraform init -backend=false` → `terraform validate`。結果は PR に annotation で表示する |
-| lock ファイル | `.terraform.lock.hcl` があるディレクトリでは `init -lockfile=readonly` を使い、`required_providers` と合わなければ失敗させる |
+| lock ファイル | `.terraform.lock.hcl` があるディレクトリでは `init -lockfile=readonly` を使い、`required_providers` と合わない場合や、linux_amd64 のハッシュが無い場合に失敗させる |
 | test | ディレクトリ直下か `tests/` に `*.tftest.hcl` があれば `terraform test` を実行する |
 
 - 対象ディレクトリは、変更の有無に関係なく repo 全体(`*.tf` / `*.tf.json` を含むディレクトリ。`.terraform` 配下を除く)。Terraform のファイルが無いリポジトリでは何もせず success で終わる
+- CI は linux_amd64 で動く。lock ファイルには `terraform providers lock -platform=linux_amd64 -platform=darwin_arm64` のように、開発に使うプラットフォームに加えて linux_amd64 のハッシュも記録しておく
 - クラウドの認証情報・secrets は渡さない。`terraform test` は `command = plan` と `mock_provider` で完結するテストだけを書く(実際のクラウドに `apply` するテストは失敗する)
 - Terraform は HashiCorp の `SHA256SUMS` を GPG 署名で検証してから導入する。provider は `actions/cache` でキャッシュする
 
@@ -564,6 +565,11 @@ on:
 
 permissions: {}
 
+# 同一 PR に連投された run のみ束ねて追い越しキャンセル
+concurrency:
+  group: terraform-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   terraform:
     permissions:
@@ -579,11 +585,12 @@ jobs:
 
 | inputs | 必須 | 内容 |
 |:------|:----|:----|
-| `terraform-version` | ✅ | 使う Terraform の版(例: `1.16.0`) |
+| `terraform-version` | ✅ | 使う Terraform の版(例: `1.16.0`)。`1.9.0` 以上(init の診断を annotation にするため `init -json` を使う) |
 | `working-directories` | | 検査するディレクトリ(改行区切り)。省略時は自動検出 |
 
 - トリガーは `pull_request` にする。`pull_request_target` から呼び出すと失敗する(PR のコードを base の権限で実行させないため)
 - `permissions` は `contents: read` だけを渡す。`secrets` は渡さない
+- `concurrency` は呼び出し側で設定する(呼び出し先で設定すると、1 つの run から複数回呼んだときに互いにキャンセルされるため)
 - `terraform test` が使う provider・module は PR に書かれたものが実行されるため、権限を増やさないこと
 
 3. main にマージ後、PR で **Terraform を検査** の job が成功することを確認する

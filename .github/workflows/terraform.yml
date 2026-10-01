@@ -12,7 +12,7 @@ on:
   workflow_call:
     inputs:
       terraform-version:
-        description: "使う Terraform の版（例: 1.16.0）。HashiCorp の SHA256SUMS と GPG 署名で検証して導入する"
+        description: "使う Terraform の版（例: 1.16.0。1.9.0 以上）。HashiCorp の SHA256SUMS と GPG 署名で検証して導入する"
         type: string
         required: true
       working-directories:
@@ -30,11 +30,8 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-    # 同一 PR に連投された run のみ束ねて追い越しキャンセル。
-    # 呼び出し側の concurrency と group 名が衝突しないよう、prefix を付ける
-    concurrency:
-      group: reusable-terraform-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-      cancel-in-progress: true
+    # concurrency は呼び出し側で設定する（docs/SETUP.md「6.1」）。ここで group を決めると、1 つの run から
+    # working-directories や版を変えて複数回呼んだときに同じ group になり、互いにキャンセルされてしまう
     env:
       TF_IN_AUTOMATION: "1"
       TF_INPUT: "0"
@@ -109,8 +106,13 @@ jobs:
         run: |
           set -euo pipefail
           # 版はダウンロード URL に埋め込むため、形式を限定する
-          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+          if ! [[ "${VERSION}" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
             echo "::error::terraform-version の形式が不正です（例: 1.16.0）" >&2
+            exit 1
+          fi
+          # init の -json（診断を annotation にするために使う）は 1.9 から
+          if [ "${BASH_REMATCH[1]}" -lt 1 ] || { [ "${BASH_REMATCH[1]}" -eq 1 ] && [ "${BASH_REMATCH[2]}" -lt 9 ]; }; then
+            echo "::error::terraform-version には 1.9.0 以上を指定してください" >&2
             exit 1
           fi
 
@@ -171,10 +173,38 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          escape() { local value=${1//%/%25}; value=${value//$'\r'/%0D}; printf '%s' "${value//$'\n'/%0A}"; }
-          escape_property() { local value; value=$(escape "$1"); value=${value//:/%3A}; printf '%s' "${value//,/%2C}"; }
 
-          # init に成功したディレクトリ（terraform test の対象候補）
+          # terraform の -json 出力（1 行 1 イベント）を log と annotation に変換する（terraform test の step でも使う）。
+          # filename は -chdir 先からの相対パスのため、repo ルート基準に直す
+          cat > "${RUNNER_TEMP}/annotate.jq" <<'JQ'
+          def esc: gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");
+          def prop: esc | gsub(":"; "%3A") | gsub(","; "%2C");
+          def norm: split("/") | reduce .[] as $p ([];
+            if $p == "." or $p == "" then .
+            elif $p == ".." and length > 0 and .[-1] != ".." then .[:-1]
+            else . + [$p] end) | join("/");
+          def annotate:
+            .diagnostic as $d
+            | if $lock != "" and $d.summary == "Provider lock file not updated" then
+                # lock ファイルに無いハッシュ（多くは開発者と異なる linux_amd64 のもの）を readonly のため追記できなかった。
+                # init は成功するが、導入した provider を lock ファイルで検証できず validate / test が失敗する
+                "::error file=\($lock | norm | prop)::\("\($tool): lock ファイルに linux_amd64 の provider のハッシュがありません（`terraform providers lock -platform=linux_amd64 -platform=darwin_arm64` などで、使う全プラットフォームのハッシュを追記してください）" | esc)"
+              else
+                (if $d.severity == "warning" then "warning" else "error" end) as $level
+                | ("\($tool): \($d.summary)" + (if ($d.detail // "") != "" then ": \($d.detail)" else "" end) | esc) as $message
+                | if $d.range then
+                    "::\($level) file=\("\($dir)/\($d.range.filename)" | norm | prop),line=\($d.range.start.line)::\($message)"
+                  elif $lock != "" and ($d.summary | test("lock file|dependenc"; "i")) then
+                    "::\($level) file=\($lock | norm | prop)::\($message)"
+                  else
+                    "::\($level)::\($message)（\($dir | esc)）"
+                  end
+              end;
+          . as $line | (fromjson? // {"@message": $line})
+          | (.["@message"] // ""), (select(.type == "diagnostic") | annotate)
+          JQ
+
+          # init に成功したディレクトリ（terraform test の対象）
           : > "${RUNNER_TEMP}/initialized.txt"
           status=0
           while IFS= read -r dir; do
@@ -182,52 +212,37 @@ jobs:
             echo "::group::${dir}"
 
             # lock ファイルがあれば読み取り専用で使い、required_providers と合わなければ失敗させる
-            args=(-backend=false -input=false -no-color)
-            lock=false
+            args=(-backend=false -input=false -no-color -json)
+            lock=""
             if [ -f "${dir}/.terraform.lock.hcl" ]; then
               args+=(-lockfile=readonly)
-              lock=true
+              lock="${dir}/.terraform.lock.hcl"
             fi
 
-            init_log="${RUNNER_TEMP}/init.log"
-            init=true
-            terraform -chdir="${dir}" init "${args[@]}" 2>&1 | tee "${init_log}" || init=false
-            if [ "${init}" = "true" ]; then
-              printf '%s\n' "${dir}" >> "${RUNNER_TEMP}/initialized.txt"
-            else
+            # init の診断（構文エラーや lock ファイルの不整合）は init 自身の出力から annotation にする。
+            # init に失敗したディレクトリの validate は、module・provider が未導入なことによる二次的なエラーしか出さないため実行しない
+            result="${RUNNER_TEMP}/init.jsonl"
+            code=0
+            terraform -chdir="${dir}" init "${args[@]}" > "${result}" || code=$?
+            jq -Rr --arg tool "terraform init" --arg dir "${dir}" --arg lock "${lock}" -f "${RUNNER_TEMP}/annotate.jq" "${result}"
+            if [ "${code}" -ne 0 ]; then
               status=1
-              if [ "${lock}" = "true" ] && grep -qi 'lock file' "${init_log}"; then
-                echo "::error file=$(escape_property "${dir}/.terraform.lock.hcl")::terraform init: lock ファイルが required_providers と一致しません（\`terraform init -upgrade\` や \`terraform providers lock\` で更新してください）"
-              else
-                echo "::error::terraform init: $(escape "${dir}") の init に失敗しました（ログを参照してください）"
-              fi
+              echo "::endgroup::"
+              continue
             fi
+            if [ -n "${lock}" ] && grep -q '"summary":"Provider lock file not updated"' "${result}"; then
+              status=1
+              echo "::endgroup::"
+              continue
+            fi
+            printf '%s\n' "${dir}" >> "${RUNNER_TEMP}/initialized.txt"
 
-            # init に失敗しても validate を実行し、構文エラーなどファイル上の位置を持つ診断を annotation にする
-            # （init 失敗時の位置を持たない診断は、provider・module が未導入なことによる二次的なものなので出さない）
             result="${RUNNER_TEMP}/validate.json"
             code=0
             terraform -chdir="${dir}" validate -json -no-color > "${result}" || code=$?
             if [ "${code}" -ne 0 ]; then status=1; fi
-
-            # 検出箇所を PR に annotation 表示する（filename は -chdir 先からの相対パスのため、repo ルート基準に直す）
-            jq -r --arg dir "${dir}" --argjson init "${init}" '
-              def esc: gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");
-              def prop: esc | gsub(":"; "%3A") | gsub(","; "%2C");
-              def norm: split("/") | reduce .[] as $p ([];
-                if $p == "." or $p == "" then .
-                elif $p == ".." and length > 0 and .[-1] != ".." then .[:-1]
-                else . + [$p] end) | join("/");
-              (.diagnostics // [])[]
-              | select($init or .range)
-              | (if .severity == "warning" then "warning" else "error" end) as $level
-              | ("terraform validate: \(.summary)" + (if (.detail // "") != "" then ": \(.detail)" else "" end) | esc) as $message
-              | if .range then
-                  "::\($level) file=\("\($dir)/\(.range.filename)" | norm | prop),line=\(.range.start.line)::\($message)"
-                else
-                  "::\($level)::\($message)（\($dir | esc)）"
-                end
-            ' "${result}"
+            jq -c '(.diagnostics // [])[] | {type: "diagnostic", "@message": "\(.severity): \(.summary)", diagnostic: .}' "${result}" \
+              | jq -Rr --arg tool "terraform validate" --arg dir "${dir}" --arg lock "${lock}" -f "${RUNNER_TEMP}/annotate.jq"
             echo "::endgroup::"
           done < "${RUNNER_TEMP}/dirs.txt"
           exit "${status}"
@@ -262,24 +277,7 @@ jobs:
             if [ "${code}" -ne 0 ]; then status=1; fi
 
             # 進捗を log に出し、失敗箇所を PR に annotation 表示する
-            jq -Rr --arg dir "${dir}" '
-              def esc: gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");
-              def prop: esc | gsub(":"; "%3A") | gsub(","; "%2C");
-              def norm: split("/") | reduce .[] as $p ([];
-                if $p == "." or $p == "" then .
-                elif $p == ".." and length > 0 and .[-1] != ".." then .[:-1]
-                else . + [$p] end) | join("/");
-              . as $line | (fromjson? // {"@message": $line}) as $e
-              | ($e["@message"] // ""),
-                ($e | select(.type == "diagnostic") | .diagnostic
-                  | (if .severity == "warning" then "warning" else "error" end) as $level
-                  | ("terraform test: \(.summary)" + (if (.detail // "") != "" then ": \(.detail)" else "" end) | esc) as $message
-                  | if .range then
-                      "::\($level) file=\("\($dir)/\(.range.filename)" | norm | prop),line=\(.range.start.line)::\($message)"
-                    else
-                      "::\($level)::\($message)（\($dir | esc)）"
-                    end)
-            ' "${result}"
+            jq -Rr --arg tool "terraform test" --arg dir "${dir}" --arg lock "" -f "${RUNNER_TEMP}/annotate.jq" "${result}"
             echo "::endgroup::"
           done < "${RUNNER_TEMP}/initialized.txt"
           exit "${status}"
