@@ -12,7 +12,14 @@
       "source": "./plugins/dev",
       "description": "全社共通の開発ワークフロー",
       "category": "workflow",
-      "keywords": ["ddd", "workflow", "github", "hooks", "rules"]
+      "keywords": ["workflow", "github", "hooks"]
+    },
+    {
+      "name": "ruleset",
+      "source": "./plugins/ruleset",
+      "description": "全社共通の実装ルール (paths 付き skill)",
+      "category": "development",
+      "keywords": ["rules", "ddd", "github-actions"]
     }
   ]
 }

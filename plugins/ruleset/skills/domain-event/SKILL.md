@@ -1,8 +1,9 @@
 ---
-description: ドメインイベントの設計/実装方法
-summary: 集約/プレーンを跨ぐ副作用はドメインイベントで伝播する。過去形で命名し to_dict はプリミティブのみ。発行は集約メソッド内で行い application 層から publish しない
+name: domain-event
+description: ドメインイベントの設計/実装方法。集約/プレーンを跨ぐ副作用はドメインイベントで伝播する。過去形で命名し to_dict はプリミティブのみ。発行は集約メソッド内で行い application 層から publish しない
 paths:
   - "backend/src/**/domain/model/**/*.py"
+user-invocable: false
 ---
 # ドメインイベント (Domain Event)
 

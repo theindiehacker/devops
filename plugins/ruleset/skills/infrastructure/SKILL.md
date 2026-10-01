@@ -1,9 +1,10 @@
 ---
-description: Terraform やインフラ関連の変更時に適用
-summary: Terraform はローカル実行せず PR 経由で CI から適用する。シークレットは Secret Manager 管理で .env はコミットしない
+name: infrastructure
+description: Terraform やインフラ関連の変更時に適用。Terraform はローカル実行せず PR 経由で CI から適用する。シークレットは Secret Manager 管理で .env はコミットしない
 paths:
   - "infrastructure/**/*.tf"
   - "infrastructure/**/*.hcl"
+user-invocable: false
 ---
 
 # インフラルール

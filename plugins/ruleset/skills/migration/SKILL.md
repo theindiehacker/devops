@@ -1,11 +1,12 @@
 ---
-description: データベースモデルやマイグレーション関連の変更時に適用
-summary: マイグレーションは task migration:generate で自動生成し内容を目視確認する。データ損失を伴う変更は特に慎重に。テーブル追加時は core.py の tables に登録
+name: migration
+description: データベースモデルやマイグレーション関連の変更時に適用。マイグレーションは task migration:generate で自動生成し内容を目視確認する。データ損失を伴う変更は特に慎重に。テーブル追加時は core.py の tables に登録
 paths:
   - "backend/src/**/persistence/**/*.py"
   # 素のディレクトリパスはディレクトリ自身にしかマッチしないため配下全体を指定する
   - "backend/migration/**/*"
   - "backend/alembic.ini"
+user-invocable: false
 ---
 
 # データベースマイグレーションルール

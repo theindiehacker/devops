@@ -9,8 +9,9 @@
 plugins/<plugin-name>/
   .claude-plugin/plugin.json         # プラグインのマニフェスト（name / version / description など）
   skills/<skill-name>/SKILL.md       # スキル定義（/<plugin-name>:<skill-name> で起動）
-  rules/                             # プロジェクト規約（各 SKILL.md から参照）
 ```
+
+実装ルールは `ruleset` プラグインに `paths` 付き skill（`user-invocable: false`）として置く。プラグイン内の `rules/` ディレクトリは Claude Code に読み込まれないため使わない。
 
 新しいプラグインを追加する場合は `plugins/` 配下にディレクトリを作成し、`.claude-plugin/marketplace.json` の `plugins` 配列にエントリを追加してください。
 

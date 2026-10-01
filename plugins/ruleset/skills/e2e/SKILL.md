@@ -1,9 +1,10 @@
 ---
-description: E2E テスト (Playwright) の実装・実行ルール
-summary: E2E は本物の API / DB / Mailpit を叩く。テストデータはユニークなメールで分離し、非同期経路は expect.poll / toPass で待つ
+name: e2e
+description: E2E テスト (Playwright) の実装・実行ルール。E2E は本物の API / DB / Mailpit を叩く。テストデータはユニークなメールで分離し、非同期経路は expect.poll / toPass で待つ
 paths:
   - "frontend/e2e/**"
   - "frontend/playwright.config.ts"
+user-invocable: false
 ---
 
 # E2E テストルール (Playwright)

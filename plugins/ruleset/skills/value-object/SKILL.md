@@ -1,8 +1,9 @@
 ---
-description: 値オブジェクト (Value Object) の設計/実装方法
-summary: 業務概念を生 str/int で引き回さず VO 化する(primitive obsession 撲滅)。VO は不変・値等価・自己検証で不正値は生成不可。取り違えると事故る ID は別々の VO
+name: value-object
+description: 値オブジェクト (Value Object) の設計/実装方法。業務概念を生 str/int で引き回さず VO 化する(primitive obsession 撲滅)。VO は不変・値等価・自己検証で不正値は生成不可。取り違えると事故る ID は別々の VO
 paths:
   - "backend/src/**/domain/model/**/*.py"
+user-invocable: false
 ---
 # 値オブジェクト (Value Object)
 
@@ -29,6 +30,6 @@ paths:
 
 ## アンチパターン
 
- - ❌ コマンド/DPO 以外の**ドメイン層で生 `str` / `int` を業務概念として持つ**（primitive obsession）。application の Command は例外的にプリミティブ（`rules/backend/src/application/application.md`）だが、集約フィールド・メソッド引数・戻り値は VO にする。
+ - ❌ コマンド/DPO 以外の**ドメイン層で生 `str` / `int` を業務概念として持つ**（primitive obsession）。application の Command は例外的にプリミティブ（`ruleset:application-service` skill）だが、集約フィールド・メソッド引数・戻り値は VO にする。
  - ❌ VO をミュータブルにする / セッターを生やす（VO は差し替えるもの、書き換えるものではない）。
  - ❌ バリデーションを VO の外（application サービスや resource）に散らす。VO の生成に集約する。

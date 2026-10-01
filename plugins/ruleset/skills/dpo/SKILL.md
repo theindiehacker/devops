@@ -1,8 +1,9 @@
 ---
-description: DPO クラスの実装方法
-summary: DPO の生成には集約のみを渡す。プリミティブや他 DPO をフィールドに持たせない
+name: dpo
+description: DPO クラスの実装方法。DPO の生成には集約のみを渡す。プリミティブや他 DPO をフィールドに持たせない
 paths:
   - "backend/src/**/application/**/dpo.py"
+user-invocable: false
 ---
 # DPO (Data Payload Object)
 ## 実装方法

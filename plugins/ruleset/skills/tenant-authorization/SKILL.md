@@ -1,9 +1,10 @@
 ---
-description: テナントスコープのルートの認可・アドレッシング規約
-summary: テナント ID はパスパラメータで受け、認可はトークンの membership 突合で判定する。非メンバーは 404 で存在を伏せ、権限不足のメンバーは 403。所属ゼロも fail-close。RLS 境界は pool_id / owner_tenant_id
+name: tenant-authorization
+description: テナントスコープのルートの認可・アドレッシング規約。テナント ID はパスパラメータで受け、認可はトークンの membership 突合で判定する。非メンバーは 404 で存在を伏せ、権限不足のメンバーは 403。所属ゼロも fail-close。RLS 境界は pool_id / owner_tenant_id
 paths:
   - "backend/src/tenant/port/adapter/resource/**/*.py"
   - "backend/src/common/port/adapter/resource/dependency/**/*.py"
+user-invocable: false
 ---
 # テナントの認可・アドレッシング (secure-by-default)
 
