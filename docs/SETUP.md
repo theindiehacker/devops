@@ -338,7 +338,13 @@ Rules セクションで以下のチェックを外す:
 | `github-workflows` | `main` | `.github/workflows/python.yml` | Python の規約(uv での依存管理)・lint・書式・セキュリティ(ruff の `S` ルール)・型・依存関係 |
 | `github-workflows` | `main` | `.github/workflows/typescript.yml` | TypeScript の規約(Bun での依存管理)・lint・書式・型・未使用パッケージ |
 
-> 必須ワークフローは対象 repo のコードを実行しない解析に揃える。`python.yml` と `typescript.yml` と `terraform.yml` の検査だけが例外で、`uv sync` / `bun install` による依存導入と、その環境上で動く mypy(プラグインを含む) / lint-imports / deptry / Biome / knip / tsc、`terraform init` / `validate` / `test` が実行する provider・module が対象 repo のコードに触れる(いずれも `contents: read` のみで secrets は使わない)。
+> 必須ワークフローは、対象 repo のコードを実行してよい(`python.yml` / `typescript.yml` の `uv sync` / `bun install` による依存導入と、その環境上で動く mypy(プラグインを含む) / lint-imports / deptry / Biome / knip / tsc、`terraform.yml` の `terraform init` / `validate` / `test` が実行する provider・module など)。ただし次を守る。
+> - `permissions` は read のみとし、secrets を使わない。トリガーは `pull_request` とし、`pull_request_target` では動かさない
+> - `actions/checkout` は `persist-credentials: false` にする
+> - repo の環境に依存して失敗し得る前提は、下の「導入時の前提」に書く。対応できない repo は「例外運用」で外す
+>
+> この条件なら、PR のコードが動いても、その repo の通常の CI と同じで越えられる権限の境界は無い。
+>
 > 検査の対象や厳しさ、src レイアウトの自パッケージの解決は、対象 repo の設定ファイル(`mypy.ini` / `[tool.deptry]` / `[build-system]` / `biome.json` / `knip.json` / `tsconfig.json` など)に従う。
 
 **導入時の前提** : 次に当てはまる repo は、対応するまで必須チェックが fail する。
