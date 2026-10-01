@@ -101,13 +101,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${TF_PLUGIN_CACHE_DIR}"
-          # 対象 repo 由来のパスで ::group:: の行を分けられないようエスケープする
-          escape() { local value=${1//%/%25}; value=${value//$'\r'/%0D}; printf '%s' "${value//$'\n'/%0A}"; }
+          # 改行を含むパスは収集時に拒否済みのため、::group:: のタイトルは % だけをエスケープすればよい。
+          # terraform（provider・external data source を含む）が stdin を読んでディレクトリ一覧を消費しないよう、< /dev/null で切り離す
 
           : > "${RUNNER_TEMP}/initialized.txt"
           status=0
           while IFS= read -r dir; do
-            echo "::group::$(escape "${dir}")"
+            echo "::group::${dir//%/%25}"
             # lock ファイルがあれば読み取り専用で使い、required_providers と合わなければ失敗させる
             args=(-backend=false)
             if [ -f "${dir}/.terraform.lock.hcl" ]; then args+=(-lockfile=readonly); fi
@@ -115,10 +115,10 @@ jobs:
             # init に失敗したディレクトリは validate しない（module・provider が未導入なことによる二次的なエラーしか出ない）。
             # lock ファイルに無いハッシュ（多くは linux_amd64 のもの）を readonly のため追記できなかったときは、
             # init は警告だけで成功するが provider を検証できないため失敗とする
-            if terraform -chdir="${dir}" init "${args[@]}" 2>&1 | tee "${RUNNER_TEMP}/init.log" \
+            if terraform -chdir="${dir}" init "${args[@]}" < /dev/null 2>&1 | tee "${RUNNER_TEMP}/init.log" \
               && ! grep -q 'Provider lock file not updated' "${RUNNER_TEMP}/init.log"; then
               printf '%s\n' "${dir}" >> "${RUNNER_TEMP}/initialized.txt"
-              terraform -chdir="${dir}" validate || status=1
+              terraform -chdir="${dir}" validate < /dev/null || status=1
             else
               status=1
             fi
@@ -134,18 +134,16 @@ jobs:
           TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
         run: |
           set -euo pipefail
-          escape() { local value=${1//%/%25}; value=${value//$'\r'/%0D}; printf '%s' "${value//$'\n'/%0A}"; }
+          shopt -s nullglob
 
           status=0
           while IFS= read -r dir; do
             # terraform test はモジュールのディレクトリで実行する。テストはその直下か tests/ に置かれる（terraform の既定）
-            if ! compgen -G "${dir}/*.tftest.hcl" > /dev/null && ! compgen -G "${dir}/*.tftest.json" > /dev/null \
-              && ! compgen -G "${dir}/tests/*.tftest.hcl" > /dev/null && ! compgen -G "${dir}/tests/*.tftest.json" > /dev/null; then
-              continue
-            fi
-            echo "::group::$(escape "${dir}")"
+            tests=("${dir}"/{,tests/}*.tftest.{hcl,json})
+            if [ "${#tests[@]}" -eq 0 ]; then continue; fi
+            echo "::group::${dir//%/%25}"
             # クラウドの認証情報は渡さないため、command = plan と mock_provider で完結するテストだけが通る
-            terraform -chdir="${dir}" test || status=1
+            terraform -chdir="${dir}" test < /dev/null || status=1
             echo "::endgroup::"
           done < "${RUNNER_TEMP}/initialized.txt"
           exit "${status}"
