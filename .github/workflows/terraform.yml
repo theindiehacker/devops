@@ -1,0 +1,285 @@
+name: "🏗️ terraform"
+
+# Terraform の validate / test を行う reusable workflow（呼び出し方は docs/SETUP.md の「6.」を参照）。
+#
+# init が要る検査は Terraform の版や対象ディレクトリが repo ごとに異なり、inputs を受け取れない
+# 必須ワークフロー（terraform-fmt.yml / tflint.yml / trivy.yml）では扱えないため、呼び出し側から uses: で使う。
+# fmt / tflint / trivy は必須ワークフローで実行済みのため、ここでは重複させない。
+#
+# terraform init / test は PR に書かれた provider・module・data source を実行するため、
+# 権限は contents: read のみとし、secrets も受け取らない（クラウドの認証情報が無い前提で動くテストだけが対象）。
+on:
+  workflow_call:
+    inputs:
+      terraform-version:
+        description: "使う Terraform の版（例: 1.16.0）。HashiCorp の SHA256SUMS と GPG 署名で検証して導入する"
+        type: string
+        required: true
+      working-directories:
+        description: "検査するディレクトリ（repo ルートからの相対パスを改行区切りで指定）。省略時は *.tf / *.tf.json を含む全ディレクトリ"
+        type: string
+        required: false
+        default: ""
+
+permissions: {}
+
+jobs:
+  terraform:
+    name: "Terraform を検査"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    # 同一 PR に連投された run のみ束ねて追い越しキャンセル。
+    # 呼び出し側の concurrency と group 名が衝突しないよう、prefix を付ける
+    concurrency:
+      group: reusable-terraform-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    env:
+      TF_IN_AUTOMATION: "1"
+      TF_INPUT: "0"
+      CHECKPOINT_DISABLE: "1"
+    steps:
+      - name: "呼び出し元のイベントを検査"
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          # pull_request_target は base の権限・secrets で動くため、PR のコードを init / test で実行させない
+          if [ "${EVENT_NAME}" = "pull_request_target" ]; then
+            echo "::error::pull_request_target からは呼び出せません。呼び出し側のトリガーを pull_request にしてください"
+            exit 1
+          fi
+
+      - name: "Checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "検査対象を収集"
+        id: collect
+        shell: bash
+        env:
+          WORKING_DIRECTORIES: ${{ inputs.working-directories }}
+        run: |
+          set -euo pipefail
+          # 対象 repo 由来のパスをそのまま埋めるとワークフローコマンドを偽装できるためエスケープする
+          escape() { local value=${1//%/%25}; value=${value//$'\r'/%0D}; printf '%s' "${value//$'\n'/%0A}"; }
+
+          # 変更があったディレクトリではなく repo 全体を検査する（examples/ はモジュールを相対パスで呼ぶため、
+          # モジュールだけを変えた PR で examples が壊れても検知できるようにする）
+          if [ -n "${WORKING_DIRECTORIES//[[:space:]]/}" ]; then
+            while IFS= read -r dir; do
+              # 前後の空白を除き、空行は読み飛ばす。先頭の ./ と末尾の / を除く（"." や "./" は repo ルート）
+              dir=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' <<< "${dir}")
+              if [ -z "${dir}" ]; then continue; fi
+              dir=$(sed -E 's|^(\./)+||; s|/+$||' <<< "${dir}")
+              if [ -z "${dir}" ]; then dir=.; fi
+              if [ ! -d "${dir}" ]; then
+                echo "::error::working-directories に指定したディレクトリが存在しません: $(escape "${dir}")" >&2
+                exit 1
+              fi
+              printf '%s\n' "${dir}"
+            done <<< "${WORKING_DIRECTORIES}" | sort -u > "${RUNNER_TEMP}/dirs.txt"
+          else
+            # git 管理下のファイルだけを見る。.terraform はキャッシュ・vendored モジュール置き場のため対象外
+            git ls-files -z -- ':(glob)**/*.tf' ':(glob)**/*.tf.json' \
+              | while IFS= read -r -d '' f; do dirname "${f}"; done \
+              | { grep -Ev '(^|/)\.terraform(/|$)' || true; } \
+              | sort -u > "${RUNNER_TEMP}/dirs.txt"
+          fi
+          cat "${RUNNER_TEMP}/dirs.txt"
+
+          # Terraform のファイルが無い repo では導入ごと skip し、run 全体は success にする
+          if [ -s "${RUNNER_TEMP}/dirs.txt" ]; then
+            echo "found=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "対象のディレクトリがないため skip します"
+            echo "found=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: "Install terraform"
+        if: steps.collect.outputs.found == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ inputs.terraform-version }}
+          # HashiCorp の署名鍵（https://www.hashicorp.com/security）の主鍵 fingerprint
+          HASHICORP_FPR: C874011F0AB405110D02105534365D9472D7468F
+        run: |
+          set -euo pipefail
+          # 版はダウンロード URL に埋め込むため、形式を限定する
+          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::terraform-version の形式が不正です（例: 1.16.0）" >&2
+            exit 1
+          fi
+
+          # 版は repo ごとに異なり SHA-256 を中央で固定できないため、HashiCorp が公開する SHA256SUMS を
+          # GPG 署名で検証し、その SHA256SUMS でアーカイブを検証する
+          work=$(mktemp -d)
+          cd "${work}"
+          base="https://releases.hashicorp.com/terraform/${VERSION}"
+          ARCHIVE="terraform_${VERSION}_linux_amd64.zip"
+          SUMS="terraform_${VERSION}_SHA256SUMS"
+          curl -sSfL -o "${ARCHIVE}" "${base}/${ARCHIVE}"
+          curl -sSfL -o "${SUMS}" "${base}/${SUMS}"
+          curl -sSfL -o "${SUMS}.sig" "${base}/${SUMS}.sig"
+          curl -sSfL -o hashicorp.asc "https://www.hashicorp.com/.well-known/pgp-key.txt"
+
+          # 鍵ファイルは差し替えられ得るため、署名が固定した主鍵（の副鍵）によるものかを VALIDSIG の
+          # 末尾（主鍵の fingerprint）で照合する
+          export GNUPGHOME="${work}/gnupg"
+          mkdir -m 700 "${GNUPGHOME}"
+          gpg --batch --quiet --import hashicorp.asc
+          gpg --batch --status-fd 1 --verify "${SUMS}.sig" "${SUMS}" > gpg-status.txt
+          if ! grep -Eq "^\[GNUPG:\] VALIDSIG .* ${HASHICORP_FPR}\$" gpg-status.txt; then
+            echo "::error::${SUMS} の署名が HashiCorp の鍵 (${HASHICORP_FPR}) によるものではありません" >&2
+            exit 1
+          fi
+
+          # SHA-256 検証（改ざん・破損を検知）
+          grep -F "  ${ARCHIVE}" "${SUMS}" > archive.sha256
+          if [ "$(wc -l < archive.sha256)" -ne 1 ]; then
+            echo "::error::${SUMS} に ${ARCHIVE} の行がありません" >&2
+            exit 1
+          fi
+          sha256sum -c archive.sha256
+
+          sudo unzip -o "${ARCHIVE}" terraform -d /usr/local/bin
+          sudo chmod +x /usr/local/bin/terraform
+          cd /
+          rm -rf "${work}"
+          terraform version
+
+          # provider のプラグインキャッシュ（下の actions/cache の path と揃える）
+          mkdir -p "${RUNNER_TEMP}/terraform-plugin-cache"
+          echo "TF_PLUGIN_CACHE_DIR=${RUNNER_TEMP}/terraform-plugin-cache" >> "${GITHUB_ENV}"
+
+      # provider は lock ファイルの checksum と一致したものだけが使われるため、キャッシュの中身は init 時に検証される
+      - name: "provider のキャッシュ"
+        if: steps.collect.outputs.found == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ${{ runner.temp }}/terraform-plugin-cache
+          key: terraform-plugins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: |
+            terraform-plugins-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: "terraform validate"
+        id: validate
+        if: steps.collect.outputs.found == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          escape() { local value=${1//%/%25}; value=${value//$'\r'/%0D}; printf '%s' "${value//$'\n'/%0A}"; }
+          escape_property() { local value; value=$(escape "$1"); value=${value//:/%3A}; printf '%s' "${value//,/%2C}"; }
+
+          # init に成功したディレクトリ（terraform test の対象候補）
+          : > "${RUNNER_TEMP}/initialized.txt"
+          status=0
+          while IFS= read -r dir; do
+            if [ -z "${dir}" ]; then continue; fi
+            echo "::group::${dir}"
+
+            # lock ファイルがあれば読み取り専用で使い、required_providers と合わなければ失敗させる
+            args=(-backend=false -input=false -no-color)
+            lock=false
+            if [ -f "${dir}/.terraform.lock.hcl" ]; then
+              args+=(-lockfile=readonly)
+              lock=true
+            fi
+
+            init_log="${RUNNER_TEMP}/init.log"
+            init=true
+            terraform -chdir="${dir}" init "${args[@]}" 2>&1 | tee "${init_log}" || init=false
+            if [ "${init}" = "true" ]; then
+              printf '%s\n' "${dir}" >> "${RUNNER_TEMP}/initialized.txt"
+            else
+              status=1
+              if [ "${lock}" = "true" ] && grep -qi 'lock file' "${init_log}"; then
+                echo "::error file=$(escape_property "${dir}/.terraform.lock.hcl")::terraform init: lock ファイルが required_providers と一致しません（\`terraform init -upgrade\` や \`terraform providers lock\` で更新してください）"
+              else
+                echo "::error::terraform init: $(escape "${dir}") の init に失敗しました（ログを参照してください）"
+              fi
+            fi
+
+            # init に失敗しても validate を実行し、構文エラーなどファイル上の位置を持つ診断を annotation にする
+            # （init 失敗時の位置を持たない診断は、provider・module が未導入なことによる二次的なものなので出さない）
+            result="${RUNNER_TEMP}/validate.json"
+            code=0
+            terraform -chdir="${dir}" validate -json -no-color > "${result}" || code=$?
+            if [ "${code}" -ne 0 ]; then status=1; fi
+
+            # 検出箇所を PR に annotation 表示する（filename は -chdir 先からの相対パスのため、repo ルート基準に直す）
+            jq -r --arg dir "${dir}" --argjson init "${init}" '
+              def esc: gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");
+              def prop: esc | gsub(":"; "%3A") | gsub(","; "%2C");
+              def norm: split("/") | reduce .[] as $p ([];
+                if $p == "." or $p == "" then .
+                elif $p == ".." and length > 0 and .[-1] != ".." then .[:-1]
+                else . + [$p] end) | join("/");
+              (.diagnostics // [])[]
+              | select($init or .range)
+              | (if .severity == "warning" then "warning" else "error" end) as $level
+              | ("terraform validate: \(.summary)" + (if (.detail // "") != "" then ": \(.detail)" else "" end) | esc) as $message
+              | if .range then
+                  "::\($level) file=\("\($dir)/\(.range.filename)" | norm | prop),line=\(.range.start.line)::\($message)"
+                else
+                  "::\($level)::\($message)（\($dir | esc)）"
+                end
+            ' "${result}"
+            echo "::endgroup::"
+          done < "${RUNNER_TEMP}/dirs.txt"
+          exit "${status}"
+
+      - name: "terraform test"
+        # validate が失敗しても、init できたディレクトリのテストは実行する（導入の失敗などで validate が skip されたときは実行しない）
+        if: ${{ !cancelled() && (steps.validate.outcome == 'success' || steps.validate.outcome == 'failure') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # テストはディレクトリ直下か tests/ にある *.tftest.hcl / *.tftest.json（terraform test の既定の探索先）
+          has_tests() {
+            local d
+            for d in "$1" "$1/tests"; do
+              if [ -d "${d}" ] && [ -n "$(find "${d}" -maxdepth 1 -type f \( -name '*.tftest.hcl' -o -name '*.tftest.json' \) -print -quit)" ]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          status=0
+          while IFS= read -r dir; do
+            if [ -z "${dir}" ] || ! has_tests "${dir}"; then continue; fi
+            echo "::group::${dir}"
+
+            # クラウドの認証情報は渡さないため、command = plan と mock_provider で完結するテストだけが通る
+            result="${RUNNER_TEMP}/test.jsonl"
+            code=0
+            terraform -chdir="${dir}" test -json -no-color > "${result}" || code=$?
+            if [ "${code}" -ne 0 ]; then status=1; fi
+
+            # 進捗を log に出し、失敗箇所を PR に annotation 表示する
+            jq -Rr --arg dir "${dir}" '
+              def esc: gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");
+              def prop: esc | gsub(":"; "%3A") | gsub(","; "%2C");
+              def norm: split("/") | reduce .[] as $p ([];
+                if $p == "." or $p == "" then .
+                elif $p == ".." and length > 0 and .[-1] != ".." then .[:-1]
+                else . + [$p] end) | join("/");
+              . as $line | (fromjson? // {"@message": $line}) as $e
+              | ($e["@message"] // ""),
+                ($e | select(.type == "diagnostic") | .diagnostic
+                  | (if .severity == "warning" then "warning" else "error" end) as $level
+                  | ("terraform test: \(.summary)" + (if (.detail // "") != "" then ": \(.detail)" else "" end) | esc) as $message
+                  | if .range then
+                      "::\($level) file=\("\($dir)/\(.range.filename)" | norm | prop),line=\(.range.start.line)::\($message)"
+                    else
+                      "::\($level)::\($message)（\($dir | esc)）"
+                    end)
+            ' "${result}"
+            echo "::endgroup::"
+          done < "${RUNNER_TEMP}/initialized.txt"
+          exit "${status}"

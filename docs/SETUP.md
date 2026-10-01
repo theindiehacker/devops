@@ -477,7 +477,7 @@ git ls-remote https://github.com/theindiehacker/github-workflows 'refs/tags/v1.0
 ---
 ## 5. 🏷️ リリースタグ
 
-呼び出し側が reusable workflow(「4.」)を `@<SHA>  # vX.Y.Z` で参照し、Renovate で更新できるようにするため、本リポジトリには semver のリリースタグを付ける。
+呼び出し側が reusable workflow(「4.」「6.」)を `@<SHA>  # vX.Y.Z` で参照し、Renovate で更新できるようにするため、本リポジトリには semver のリリースタグを付ける。
 
 **リリースの手順** : 🔗 本リポジトリ → Actions → **🏷️ Release** → **Run workflow**
 
@@ -534,3 +534,56 @@ Rules セクションで以下にチェック:
 最初のリリース(`v1.0.0`)の前に有効にしておく。
 
 </details>
+
+---
+## 6. 🏗️ Terraform ワークフロー
+
+`terraform init` が要る検査(validate / test)を、各リポジトリから reusable workflow [`terraform.yml`](../.github/workflows/terraform.yml) として呼び出す。
+fmt / tflint / trivy は必須ワークフロー(2.)で実行済みのため、ここでは行わない。
+
+| 検査 | 内容 |
+|:----|:----|
+| validate | 対象ディレクトリごとに `terraform init -backend=false` → `terraform validate`。結果は PR に annotation で表示する |
+| lock ファイル | `.terraform.lock.hcl` があるディレクトリでは `init -lockfile=readonly` を使い、`required_providers` と合わなければ失敗させる |
+| test | ディレクトリ直下か `tests/` に `*.tftest.hcl` があれば `terraform test` を実行する |
+
+- 対象ディレクトリは、変更の有無に関係なく repo 全体(`*.tf` / `*.tf.json` を含むディレクトリ。`.terraform` 配下を除く)。Terraform のファイルが無いリポジトリでは何もせず success で終わる
+- クラウドの認証情報・secrets は渡さない。`terraform test` は `command = plan` と `mock_provider` で完結するテストだけを書く(実際のクラウドに `apply` するテストは失敗する)
+- Terraform は HashiCorp の `SHA256SUMS` を GPG 署名で検証してから導入する。provider は `actions/cache` でキャッシュする
+
+### 6.1 各リポジトリに呼び出し側のワークフローを追加する
+
+1. 「4.3」の 1. と同じ手順で、最新のリリースタグのコミット SHA を確認する
+2. `.github/workflows/terraform.yml` を以下の内容で追加し、`uses:` の `<SHA>` と `# vX.Y.Z` を 1. の値で書き換える
+
+```yaml
+name: "🏗️ terraform"
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  terraform:
+    permissions:
+      contents: read
+    uses: theindiehacker/github-workflows/.github/workflows/terraform.yml@<SHA>  # vX.Y.Z
+    with:
+      terraform-version: "1.16.0"
+      # 省略時は *.tf / *.tf.json を含む全ディレクトリ。限定する場合は repo ルートからの相対パスを改行区切りで書く
+      # working-directories: |
+      #   modules/vpc
+      #   examples/vpc
+```
+
+| inputs | 必須 | 内容 |
+|:------|:----|:----|
+| `terraform-version` | ✅ | 使う Terraform の版(例: `1.16.0`) |
+| `working-directories` | | 検査するディレクトリ(改行区切り)。省略時は自動検出 |
+
+- トリガーは `pull_request` にする。`pull_request_target` から呼び出すと失敗する(PR のコードを base の権限で実行させないため)
+- `permissions` は `contents: read` だけを渡す。`secrets` は渡さない
+- `terraform test` が使う provider・module は PR に書かれたものが実行されるため、権限を増やさないこと
+
+3. main にマージ後、PR で **Terraform を検査** の job が成功することを確認する
