@@ -105,6 +105,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # dev は security-guidance@claude-plugins-official に依存するため、公式マーケットプレイスも追加する
+          # action が URL の ref 指定を受け付けず SHA 固定できない。fastship は main を PR 必須で保護し、公式は action と同じ発行元のため既定ブランチ追従を許容する
           plugin_marketplaces: |
             https://github.com/anthropics/claude-plugins-official.git
             https://github.com/theindiehacker/fastship-plugins.git
