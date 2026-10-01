@@ -12,7 +12,7 @@ on:
   workflow_call:
     inputs:
       terraform-version:
-        description: "使う Terraform の版（例: 1.16.0。1.9.0 以上）。HashiCorp の SHA256SUMS と GPG 署名で検証して導入する"
+        description: "使う Terraform の版（例: 1.16.0。1.9.0 以上）"
         type: string
         required: true
       working-directories:
@@ -37,15 +37,23 @@ jobs:
       TF_INPUT: "0"
       CHECKPOINT_DISABLE: "1"
     steps:
-      - name: "呼び出し元のイベントを検査"
+      - name: "呼び出し元のイベントと版を検査"
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
+          VERSION: ${{ inputs.terraform-version }}
         run: |
           set -euo pipefail
           # pull_request_target は base の権限・secrets で動くため、PR のコードを init / test で実行させない
           if [ "${EVENT_NAME}" = "pull_request_target" ]; then
             echo "::error::pull_request_target からは呼び出せません。呼び出し側のトリガーを pull_request にしてください"
+            exit 1
+          fi
+          # 版は x.y.z で固定する（latest や範囲指定だと、同じコミットでも実行のたびに版が変わる）。
+          # init の -json（診断を annotation にするために使う）は 1.9 から
+          if ! [[ "${VERSION}" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] \
+            || [ "${BASH_REMATCH[1]}" -lt 1 ] || { [ "${BASH_REMATCH[1]}" -eq 1 ] && [ "${BASH_REMATCH[2]}" -lt 9 ]; }; then
+            echo "::error::terraform-version には 1.9.0 以上の版を x.y.z の形で指定してください（例: 1.16.0）"
             exit 1
           fi
 
@@ -95,66 +103,14 @@ jobs:
             echo "found=false" >> "${GITHUB_OUTPUT}"
           fi
 
-      - name: "Install terraform"
+      # HashiCorp の SHA256SUMS の署名を、action に同梱された HashiCorp の公開鍵で検証してから導入する。
+      # wrapper は stdout を step の output に流すため無効にする（-json の出力をそのままファイルに受ける）
+      - name: "Setup terraform"
         if: steps.collect.outputs.found == 'true'
-        shell: bash
-        env:
-          VERSION: ${{ inputs.terraform-version }}
-          # HashiCorp の署名鍵（https://www.hashicorp.com/security）の主鍵 fingerprint
-          HASHICORP_FPR: C874011F0AB405110D02105534365D9472D7468F
-        run: |
-          set -euo pipefail
-          # 版はダウンロード URL に埋め込むため、形式を限定する
-          if ! [[ "${VERSION}" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
-            echo "::error::terraform-version の形式が不正です（例: 1.16.0）" >&2
-            exit 1
-          fi
-          # init の -json（診断を annotation にするために使う）は 1.9 から
-          if [ "${BASH_REMATCH[1]}" -lt 1 ] || { [ "${BASH_REMATCH[1]}" -eq 1 ] && [ "${BASH_REMATCH[2]}" -lt 9 ]; }; then
-            echo "::error::terraform-version には 1.9.0 以上を指定してください" >&2
-            exit 1
-          fi
-
-          # 版は repo ごとに異なり SHA-256 を中央で固定できないため、HashiCorp が公開する SHA256SUMS を
-          # GPG 署名で検証し、その SHA256SUMS でアーカイブを検証する
-          work=$(mktemp -d)
-          cd "${work}"
-          base="https://releases.hashicorp.com/terraform/${VERSION}"
-          ARCHIVE="terraform_${VERSION}_linux_amd64.zip"
-          SUMS="terraform_${VERSION}_SHA256SUMS"
-          curl -sSfL -o "${ARCHIVE}" "${base}/${ARCHIVE}"
-          curl -sSfL -o "${SUMS}" "${base}/${SUMS}"
-          curl -sSfL -o "${SUMS}.sig" "${base}/${SUMS}.sig"
-          curl -sSfL -o hashicorp.asc "https://www.hashicorp.com/.well-known/pgp-key.txt"
-
-          # 鍵ファイルは差し替えられ得るため、署名が固定した主鍵（の副鍵）によるものかを VALIDSIG の
-          # 末尾（主鍵の fingerprint）で照合する
-          export GNUPGHOME="${work}/gnupg"
-          mkdir -m 700 "${GNUPGHOME}"
-          gpg --batch --quiet --import hashicorp.asc
-          gpg --batch --status-fd 1 --verify "${SUMS}.sig" "${SUMS}" > gpg-status.txt
-          if ! grep -Eq "^\[GNUPG:\] VALIDSIG .* ${HASHICORP_FPR}\$" gpg-status.txt; then
-            echo "::error::${SUMS} の署名が HashiCorp の鍵 (${HASHICORP_FPR}) によるものではありません" >&2
-            exit 1
-          fi
-
-          # SHA-256 検証（改ざん・破損を検知）
-          grep -F "  ${ARCHIVE}" "${SUMS}" > archive.sha256 || true
-          if [ "$(wc -l < archive.sha256)" -ne 1 ]; then
-            echo "::error::${SUMS} に ${ARCHIVE} の行がありません" >&2
-            exit 1
-          fi
-          sha256sum -c archive.sha256
-
-          sudo unzip -o "${ARCHIVE}" terraform -d /usr/local/bin
-          sudo chmod +x /usr/local/bin/terraform
-          cd /
-          rm -rf "${work}"
-          terraform version
-
-          # provider のプラグインキャッシュ（下の actions/cache の path と揃える）
-          mkdir -p "${RUNNER_TEMP}/terraform-plugin-cache"
-          echo "TF_PLUGIN_CACHE_DIR=${RUNNER_TEMP}/terraform-plugin-cache" >> "${GITHUB_ENV}"
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e  # v4.0.1
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
 
       # provider は lock ファイルの checksum と一致したものだけが使われるため、キャッシュの中身は init 時に検証される
       - name: "provider のキャッシュ"
@@ -170,8 +126,11 @@ jobs:
         id: validate
         if: steps.collect.outputs.found == 'true'
         shell: bash
+        env:
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
         run: |
           set -euo pipefail
+          mkdir -p "${TF_PLUGIN_CACHE_DIR}"
 
           # terraform の -json 出力（1 行 1 イベント）を log と annotation に変換する（terraform test の step でも使う）。
           # filename は -chdir 先からの相対パスのため、repo ルート基準に直す
@@ -243,6 +202,8 @@ jobs:
         # validate が失敗しても、init できたディレクトリのテストは実行する（導入の失敗などで validate が skip されたときは実行しない）
         if: ${{ !cancelled() && steps.validate.outcome != 'skipped' }}
         shell: bash
+        env:
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
         run: |
           set -euo pipefail
 

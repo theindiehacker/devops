@@ -417,13 +417,15 @@ astral-sh/setup-uv@*,
 docker/setup-buildx-action@*,
 docker/build-push-action@*,
 dorny/paths-filter@*,
+hashicorp/setup-terraform@*,
 oven-sh/setup-bun@*,
 renovatebot/github-action@*
 ```
 
 ※ 各リポジトリが新しい外部 action を使う場合はこのリストへの追加が必要(SHA ピン留めは各ワークフロー側で行う)。<br/>
 ※ `oven-sh/setup-bun` は `anthropics/claude-code-action` が内部で使用する action のため併せて許可する(「4.」)。<br/>
-※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `python.yml` が使用する。
+※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `python.yml` が使用する。<br/>
+※ `hashicorp/setup-terraform` は `terraform.yml` が使用する(「6.」)。
 
 </details>
 
@@ -550,7 +552,7 @@ fmt / tflint / trivy は必須ワークフロー(2.)で実行済みのため、�
 - 対象ディレクトリは、変更の有無に関係なく repo 全体(`*.tf` / `*.tf.json` を含むディレクトリ。`.terraform` 配下を除く)。Terraform のファイルが無いリポジトリでは何もせず success で終わる
 - CI は linux_amd64 で動く。lock ファイルには `terraform providers lock -platform=linux_amd64 -platform=darwin_arm64` のように、開発に使うプラットフォームに加えて linux_amd64 のハッシュも記録しておく
 - クラウドの認証情報・secrets は渡さない。`terraform test` は `command = plan` と `mock_provider` で完結するテストだけを書く(実際のクラウドに `apply` するテストは失敗する)
-- Terraform は HashiCorp の `SHA256SUMS` を GPG 署名で検証してから導入する。provider は `actions/cache` でキャッシュする
+- Terraform は `hashicorp/setup-terraform` で導入する(HashiCorp の `SHA256SUMS` の署名を検証してから導入する。「3.」の許可リストへの追加が必要)。provider は `actions/cache` でキャッシュする
 
 ### 6.1 各リポジトリに呼び出し側のワークフローを追加する
 
@@ -585,7 +587,7 @@ jobs:
 
 | inputs | 必須 | 内容 |
 |:------|:----|:----|
-| `terraform-version` | ✅ | 使う Terraform の版(例: `1.16.0`)。`1.9.0` 以上(init の診断を annotation にするため `init -json` を使う) |
+| `terraform-version` | ✅ | 使う Terraform の版を `x.y.z` で指定する(例: `1.16.0`)。`1.9.0` 以上(init の診断を annotation にするため `init -json` を使う)。`latest` や範囲指定は使えない |
 | `working-directories` | | 検査するディレクトリ(改行区切り)。省略時は自動検出 |
 
 - トリガーは `pull_request` にする。`pull_request_target` から呼び出すと失敗する(PR のコードを base の権限で実行させないため)
