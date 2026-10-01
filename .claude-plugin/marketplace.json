@@ -1,9 +1,8 @@
 {
   "name": "fastship",
-  "description": "theindiehacker プロジェクト群で使う Claude Code プラグインのマーケットプレイス",
+  "description": "FastShip プラグイン",
   "owner": {
     "name": "gtaiyou24",
-    "email": "gtaiyou24@gmail.com",
     "url": "https://github.com/theindiehacker"
   },
   "allowCrossMarketplaceDependenciesOn": ["claude-plugins-official"],

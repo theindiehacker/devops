@@ -1,7 +1,7 @@
 {
   "name": "dev",
-  "displayName": "Development",
-  "version": "0.3.2",
+  "displayName": "FastShip 開発プラグイン",
+  "version": "0.3.3",
   "description": "全社共通の開発ワークフロープラグイン",
   "repository": "https://github.com/theindiehacker/fastship-plugins",
   "keywords": ["ddd", "workflow", "github", "hooks", "rules"],
