@@ -12,7 +12,7 @@
 
 ```
 /plugin install security-guidance@claude-plugins-official
-/plugin install dev@fastship
+/plugin install dev@fastship  # 依存する ruleset@fastship も有効になる
 ```
 
 </details>

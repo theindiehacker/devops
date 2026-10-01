@@ -1,8 +1,9 @@
 ---
-description: リポジトリ (Repository) の設計/実装方法
-summary: 1集約ルート=1リポジトリ。集約を出し入れし境界キー(pool_id/app_id)を引数で強制する。別モジュールの集約は import せず ACL 越しに読む
+name: repository
+description: リポジトリ (Repository) の設計/実装方法。1集約ルート=1リポジトリ。集約を出し入れし境界キー(pool_id/app_id)を引数で強制する。別モジュールの集約は import せず ACL 越しに読む
 paths:
   - "backend/src/**/domain/model/**/*.py"
+user-invocable: false
 ---
 # リポジトリ (Repository)
 
@@ -25,7 +26,7 @@ paths:
 ## 別モジュールの集約を読むとき（リポジトリを作らない）
 
 リポジトリは**自集約**の永続化専用。別モジュールの集約（例: tenant から authority の `User`）を読むときは、リポジトリを作らず、その集約も import しない。
-「相手コンテキストからドメインオブジェクトを取得する」のは**ファクトリとしてのドメインサービス（腐敗防止層＝ACL）**の役割 → `rules/backend/src/domain/model/domain_service.md` を参照（4 点セット・命名・フォルダ構成・規範例）。
+「相手コンテキストからドメインオブジェクトを取得する」のは**ファクトリとしてのドメインサービス（腐敗防止層＝ACL）**の役割 → `ruleset:domain-service` skill を参照（4 点セット・命名・フォルダ構成・規範例）。
 
 ## アンチパターン
 

@@ -83,26 +83,14 @@ CI の指摘（該当行へのインラインコメントとして投稿され�
 レビューワークフローが未導入のリポジトリではコメントしても起動しないので、
 その場合は `/dev:setup` での導入を案内する。
 
-**ローカルで確認するプロジェクト規約 (バックエンド / テスト変更がある場合):**
+**ローカルで確認するプロジェクト規約 (ruleset プラグインのルールに該当する変更がある場合):**
 
-プロジェクト固有の定番違反は CI のセキュリティレビューの対象外なので、ローカルでチェックする。規約の単一情報源は各ファイルに集約しているので、ここでは節を列挙せず、変更があれば該当ファイルの全節を開いて diff を読み直し、違反はコミット前に修正する (SKILL.md に節を複製しないことでドリフトを防ぐ):
+プロジェクト固有の定番違反は CI のセキュリティレビューの対象外なので、ローカルでチェックする。規約の単一情報源は ruleset プラグインの各 skill に集約しているので、ここでは節を列挙しない。変更ファイルに該当する skill を `Skill` ツールで読み込み、全節に照らして diff を読み直し、違反はコミット前に修正する (SKILL.md に節を複製しないことでドリフトを防ぐ):
 
-```bash
-# 規約はこのプラグインに同梱（プロジェクトの .claude/rules/ に同じ相対パスがあればそちらを優先）。
-# 右辺の表記はスキル読み込み時に Claude Code がプラグインの実パスへ置換する（`:-` などの修飾を付けると置換されない）。
-# 置換されなかった場合だけキャッシュを探す。旧バージョンが残っていることがあるので最新版を選ぶ
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
-if [ ! -d "${PLUGIN_ROOT:-/nonexistent}/rules" ]; then
-  PLUGIN_ROOT=$(find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache" -mindepth 4 -maxdepth 4 \
-    -type d -path '*/dev/*' -name rules 2>/dev/null | sort -V | tail -1)
-  PLUGIN_ROOT="${PLUGIN_ROOT%/rules}"
-fi
-# 解決に失敗したら黙って進まない（$PLUGIN_ROOT が空だと / 直下を指し、以降の Read が全て外れる）
-[ -d "${PLUGIN_ROOT:-/nonexistent}/rules" ] && echo "PLUGIN_ROOT=$PLUGIN_ROOT" || echo "PLUGIN_ROOT_NOT_FOUND"
-```
-
-- `backend/src/**/*.py` の変更 → `$PLUGIN_ROOT/rules/backend.md`（および配下の domain / application ルール）
-- `backend/test/**/*.py` の変更 → `$PLUGIN_ROOT/rules/backend/test/test.md`
+- `backend/src/**/*.py` の変更 → `ruleset:backend`（および索引 `ruleset:domain-model` から辿る domain / application の skill）
+- `backend/test/**/*.py` の変更 → `ruleset:backend-test`
+- `.github/**/*.yml` の変更 → `ruleset:github-workflows`
+- その他 (`infrastructure/` / マイグレーション / E2E) → `ruleset:infrastructure` / `ruleset:migration` / `ruleset:e2e`
 
 ### 2. PR の存在確認
 
