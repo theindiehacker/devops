@@ -68,10 +68,9 @@ jobs:
           # モジュールだけを変えた PR で examples が壊れても検知できるようにする）
           if [ -n "${WORKING_DIRECTORIES//[[:space:]]/}" ]; then
             while IFS= read -r dir; do
-              # 前後の空白を除き、空行は読み飛ばす。先頭の ./ と末尾の / を除く（"." や "./" は repo ルート）
-              dir=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' <<< "${dir}")
-              if [ -z "${dir}" ]; then continue; fi
-              dir=$(sed -E 's|^(\./)+||; s|/+$||' <<< "${dir}")
+              # 空行は読み飛ばす。前後の空白、先頭の ./ と末尾の / を除く（"." や "./" は repo ルート）
+              if [ -z "${dir//[[:space:]]/}" ]; then continue; fi
+              dir=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s|^(\./)+||; s|/+$||' <<< "${dir}")
               if [ -z "${dir}" ]; then dir=.; fi
               if [ ! -d "${dir}" ]; then
                 echo "::error::working-directories に指定したディレクトリが存在しません: $(escape "${dir}")" >&2
@@ -82,7 +81,7 @@ jobs:
           else
             # git 管理下のファイルだけを見る。.terraform はキャッシュ・vendored モジュール置き場のため対象外
             git ls-files -z -- ':(glob)**/*.tf' ':(glob)**/*.tf.json' \
-              | while IFS= read -r -d '' f; do dirname "${f}"; done \
+              | while IFS= read -r -d '' f; do if [[ "${f}" == */* ]]; then printf '%s\n' "${f%/*}"; else echo .; fi; done \
               | { grep -Ev '(^|/)\.terraform(/|$)' || true; } \
               | sort -u > "${RUNNER_TEMP}/dirs.txt"
           fi
@@ -140,7 +139,7 @@ jobs:
           fi
 
           # SHA-256 検証（改ざん・破損を検知）
-          grep -F "  ${ARCHIVE}" "${SUMS}" > archive.sha256
+          grep -F "  ${ARCHIVE}" "${SUMS}" > archive.sha256 || true
           if [ "$(wc -l < archive.sha256)" -ne 1 ]; then
             echo "::error::${SUMS} に ${ARCHIVE} の行がありません" >&2
             exit 1
@@ -208,11 +207,10 @@ jobs:
           : > "${RUNNER_TEMP}/initialized.txt"
           status=0
           while IFS= read -r dir; do
-            if [ -z "${dir}" ]; then continue; fi
             echo "::group::${dir}"
 
             # lock ファイルがあれば読み取り専用で使い、required_providers と合わなければ失敗させる
-            args=(-backend=false -input=false -no-color -json)
+            args=(-backend=false -json)
             lock=""
             if [ -f "${dir}/.terraform.lock.hcl" ]; then
               args+=(-lockfile=readonly)
@@ -222,15 +220,11 @@ jobs:
             # init の診断（構文エラーや lock ファイルの不整合）は init 自身の出力から annotation にする。
             # init に失敗したディレクトリの validate は、module・provider が未導入なことによる二次的なエラーしか出さないため実行しない
             result="${RUNNER_TEMP}/init.jsonl"
-            code=0
-            terraform -chdir="${dir}" init "${args[@]}" > "${result}" || code=$?
+            init=true
+            terraform -chdir="${dir}" init "${args[@]}" > "${result}" || init=false
             jq -Rr --arg tool "terraform init" --arg dir "${dir}" --arg lock "${lock}" -f "${RUNNER_TEMP}/annotate.jq" "${result}"
-            if [ "${code}" -ne 0 ]; then
-              status=1
-              echo "::endgroup::"
-              continue
-            fi
-            if [ -n "${lock}" ] && grep -q '"summary":"Provider lock file not updated"' "${result}"; then
+            # lock ファイルに無いハッシュを readonly のため追記できなかった場合も、provider を検証できないため失敗とする
+            if [ "${init}" = "false" ] || { [ -n "${lock}" ] && grep -q '"summary":"Provider lock file not updated"' "${result}"; }; then
               status=1
               echo "::endgroup::"
               continue
@@ -238,9 +232,7 @@ jobs:
             printf '%s\n' "${dir}" >> "${RUNNER_TEMP}/initialized.txt"
 
             result="${RUNNER_TEMP}/validate.json"
-            code=0
-            terraform -chdir="${dir}" validate -json -no-color > "${result}" || code=$?
-            if [ "${code}" -ne 0 ]; then status=1; fi
+            terraform -chdir="${dir}" validate -json > "${result}" || status=1
             jq -c '(.diagnostics // [])[] | {type: "diagnostic", "@message": "\(.severity): \(.summary)", diagnostic: .}' "${result}" \
               | jq -Rr --arg tool "terraform validate" --arg dir "${dir}" --arg lock "${lock}" -f "${RUNNER_TEMP}/annotate.jq"
             echo "::endgroup::"
@@ -249,7 +241,7 @@ jobs:
 
       - name: "terraform test"
         # validate が失敗しても、init できたディレクトリのテストは実行する（導入の失敗などで validate が skip されたときは実行しない）
-        if: ${{ !cancelled() && (steps.validate.outcome == 'success' || steps.validate.outcome == 'failure') }}
+        if: ${{ !cancelled() && steps.validate.outcome != 'skipped' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -267,14 +259,12 @@ jobs:
 
           status=0
           while IFS= read -r dir; do
-            if [ -z "${dir}" ] || ! has_tests "${dir}"; then continue; fi
+            if ! has_tests "${dir}"; then continue; fi
             echo "::group::${dir}"
 
             # クラウドの認証情報は渡さないため、command = plan と mock_provider で完結するテストだけが通る
             result="${RUNNER_TEMP}/test.jsonl"
-            code=0
-            terraform -chdir="${dir}" test -json -no-color > "${result}" || code=$?
-            if [ "${code}" -ne 0 ]; then status=1; fi
+            terraform -chdir="${dir}" test -json > "${result}" || status=1
 
             # 進捗を log に出し、失敗箇所を PR に annotation 表示する
             jq -Rr --arg tool "terraform test" --arg dir "${dir}" --arg lock "" -f "${RUNNER_TEMP}/annotate.jq" "${result}"
