@@ -1,6 +1,6 @@
 # Contributing
 
-`theindiehacker/claude-plugins` は組織全体に配布する Claude Code プラグインのマーケットプレイスです。このドキュメントではプラグインの開発方法を説明します。
+`theindiehacker/fastship-plugins` は組織全体に配布する Claude Code プラグインのマーケットプレイスです。このドキュメントではプラグインの開発方法を説明します。
 
 ## 構成
 

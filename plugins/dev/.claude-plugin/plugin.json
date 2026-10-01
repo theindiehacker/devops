@@ -1,9 +1,9 @@
 {
   "name": "dev",
   "displayName": "Development",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "全社共通の開発ワークフロープラグイン",
-  "repository": "https://github.com/theindiehacker/claude-plugins",
+  "repository": "https://github.com/theindiehacker/fastship-plugins",
   "keywords": ["ddd", "workflow", "github", "hooks", "rules"],
   "dependencies": ["security-guidance@claude-plugins-official"]
 }
