@@ -61,7 +61,7 @@ jobs:
           # dirs.txt は 1 行 1 ディレクトリのため、改行を含むパスは扱えない
           git ls-files -z -- ':(glob)**/*.tf' ':(glob)**/*.tf.json' \
             | while IFS= read -r -d '' f; do
-                if [[ "${f}" == *[$'\n\r']* ]]; then echo "::error::改行を含むパスは検査できません"; exit 1; fi
+                if [[ "${f}" == *[$'\n\r']* ]]; then echo "::error::改行を含むパスは検査できません" >&2; exit 1; fi
                 if [[ "${f}" == */* ]]; then printf '%s\n' "${f%/*}"; else echo .; fi
               done \
             | { grep -Ev '(^|/)\.terraform(/|$)' || true; } \
