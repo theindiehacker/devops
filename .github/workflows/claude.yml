@@ -1,21 +1,28 @@
-name: "🧠 [Claude] Code Review"
+name: "🧠 [Claude] @claude"
 
 on:
   issue_comment:
     types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  issues:
+    types: [opened]
 
 # write は呼び出し先の job に渡す分だけを job 側で与える
 permissions: {}
 
 jobs:
-  code-review:
+  claude:
     permissions:
-      contents: read
+      # 実装結果をブランチに push するため write
+      contents: write
       actions: read
       pull-requests: write
       issues: write
       id-token: write
-    uses: theindiehacker/github-workflows/.github/workflows/claude-code-review.yml@8edcea88c04a87b1f3017556464c89d414a9f328  # v1.0.1
+    uses: theindiehacker/github-workflows/.github/workflows/claude.yml@8edcea88c04a87b1f3017556464c89d414a9f328  # v1.0.1
     secrets:
       # どちらか一方だけが組織シークレットに登録されている前提。未登録側は空文字になる
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
