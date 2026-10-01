@@ -12,7 +12,7 @@
 
 ```
 /plugin install security-guidance@claude-plugins-official
-/plugin install dev@theindiehacker
+/plugin install dev@fastship
 ```
 
 </details>
@@ -21,7 +21,7 @@
 マーケットプレイスを最新化してから、インストール済みプラグインを更新する。
 
 ```
-/plugin marketplace update theindiehacker
+/plugin marketplace update fastship
 ```
 
 以降、`/plugin` コマンドからプラグイン一覧・更新状況を確認できる。
