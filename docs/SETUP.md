@@ -429,13 +429,14 @@ docker/build-push-action@*,
 dorny/paths-filter@*,
 hashicorp/setup-terraform@*,
 oven-sh/setup-bun@*,
-renovatebot/github-action@*
+renovatebot/github-action@*,
+terraform-linters/setup-tflint@*
 ```
 
 ※ 各リポジトリが新しい外部 action を使う場合はこのリストへの追加が必要(SHA ピン留めは各ワークフロー側で行う)。<br/>
 ※ `oven-sh/setup-bun` は `anthropics/claude-code-action` が内部で使用する action のため併せて許可する(「4.」)。<br/>
 ※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `python.yml` が使用する。<br/>
-※ `hashicorp/setup-terraform` は `terraform.yml` が使用する(「2.」の必須ワークフロー)。
+※ `hashicorp/setup-terraform` は `terraform.yml` / `terraform-fmt.yml`、`terraform-linters/setup-tflint` は `tflint.yml` が使用する(「2.」の必須ワークフロー)。
 
 </details>
 

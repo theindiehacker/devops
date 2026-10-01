@@ -41,28 +41,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: "Install terraform"
+      # 書式のルールは版によってほぼ変わらないため、対象 repo の版を読み取らず中央で 1 つに固定する（terraform.yml と揃える）。
+      # action は HashiCorp の SHA256SUMS の署名を検証してから導入する
+      - name: "Setup terraform"
         if: steps.filter.outputs.terraform == 'true'
-        shell: bash
-        env:
-          # 書式のルールは版によってほぼ変わらないため、対象 repo の版を読み取らず中央で 1 つに固定する
-          # （版を repo 側の宣言に従わせると、PR が指定した任意の版をダウンロードすることになり
-          #   下の SHA-256 検証が成立しなくなる）
-          VERSION: 1.16.0
-          # terraform_1.16.0_linux_amd64.zip の SHA256（公式 SHA256SUMS から確定）
-          SHA256: 41d05b927aa174f15d1228c4eba832a323b716c68b415ef5a00179f46cc602d3
-        run: |
-          set -euo pipefail
-          ARCHIVE="terraform_${VERSION}_linux_amd64.zip"
-          curl -sSfL -o "$ARCHIVE" "https://releases.hashicorp.com/terraform/${VERSION}/${ARCHIVE}"
-
-          # SHA-256 検証（改ざん・破損を検知）
-          echo "${SHA256}  ${ARCHIVE}" | sha256sum -c -
-
-          sudo unzip -o "$ARCHIVE" terraform -d /usr/local/bin
-          sudo chmod +x /usr/local/bin/terraform
-          rm -f "$ARCHIVE"
-          terraform version
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e  # v4.0.1
+        with:
+          terraform_version: "1.16.0"
+          terraform_wrapper: false
 
       - name: "terraform fmt"
         if: steps.filter.outputs.terraform == 'true'
@@ -88,7 +74,8 @@ jobs:
             if [ -z "${dir}" ]; then continue; fi
             echo "::group::$(escape "${dir}")"
             # 結果は annotation にせず log に出す（書式が一致しないファイルと差分を出し、どう直すかを読めるようにする）
-            terraform fmt -check -no-color -diff "${dir}" || status=1
+            # 差分の文脈行は PR のファイルの内容そのままなので、行頭に "│ " を付けてワークフローコマンドとして解釈されないようにする
+            terraform fmt -check -no-color -diff "${dir}" | sed 's/^/│ /' || status=1
             echo "::endgroup::"
           done <<< "${dirs}"
           exit "${status}"

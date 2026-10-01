@@ -52,25 +52,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: "Install tflint"
+      # checksums は release の zip の SHA-256。action がダウンロード後に検証する
+      - name: "Setup tflint"
         if: steps.filter.outputs.config == 'true' || steps.filter.outputs.terraform == 'true'
-        shell: bash
-        env:
+        uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337  # v6.3.2
+        with:
           # renovate: datasource=github-release-attachments depName=terraform-linters/tflint
-          VERSION: v0.64.0
-          SHA256: cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
-        run: |
-          set -euo pipefail
-          ARCHIVE="tflint_linux_amd64.zip"
-          curl -sSfL -o "$ARCHIVE" "https://github.com/terraform-linters/tflint/releases/download/${VERSION}/${ARCHIVE}"
-
-          # SHA-256 検証（改ざん・破損を検知）
-          echo "${SHA256}  ${ARCHIVE}" | sha256sum -c -
-
-          sudo unzip -o "$ARCHIVE" tflint -d /usr/local/bin
-          sudo chmod +x /usr/local/bin/tflint
-          rm -f "$ARCHIVE"
-          tflint --version
+          tflint_version: v0.64.0
+          checksums: cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
 
       - name: "tflint"
         if: steps.filter.outputs.config == 'true' || steps.filter.outputs.terraform == 'true'
