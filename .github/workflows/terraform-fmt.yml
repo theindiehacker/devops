@@ -71,6 +71,8 @@ jobs:
           TARGETS: ${{ steps.filter.outputs.terraform_files }}
         run: |
           set -euo pipefail
+          # 対象 repo 由来のパスで ::group:: の行を分けられないようエスケープする
+          escape() { local value=${1//%/%25}; value=${value//$'\r'/%0D}; printf '%s' "${value//$'\n'/%0A}"; }
 
           # fmt は -recursive を付けなければ指定ディレクトリ直下だけを見るため、変更ファイルを
           # ディレクトリに集約する。repo 全体を -recursive で検査すると、その PR が触っていない
@@ -84,17 +86,9 @@ jobs:
           status=0
           while IFS= read -r dir; do
             if [ -z "${dir}" ]; then continue; fi
-            echo "::group::${dir}"
-
-            # 差分を log に出し、どう直せばよいかを CI 上で読めるようにする
-            terraform fmt -check -no-color -diff "${dir}" || true
-            # -list は書式が一致しないファイルのパスだけを出す（annotation 用）
-            unformatted=$(terraform fmt -check -no-color -list=true "${dir}") || status=1
-
-            while IFS= read -r file; do
-              if [ -z "${file}" ]; then continue; fi
-              echo "::error file=${file}::terraform fmt: 書式が terraform fmt の出力と一致しません（\`terraform fmt\` を実行してください）"
-            done <<< "${unformatted}"
+            echo "::group::$(escape "${dir}")"
+            # 結果は annotation にせず log に出す（書式が一致しないファイルと差分を出し、どう直すかを読めるようにする）
+            terraform fmt -check -no-color -diff "${dir}" || status=1
             echo "::endgroup::"
           done <<< "${dirs}"
           exit "${status}"
