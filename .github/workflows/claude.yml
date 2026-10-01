@@ -1,5 +1,6 @@
-name: "🧠 [Claude] @claude"
+name: "🧠 Claude"
 
+# theindiehacker/github-workflows の Claude ワークフローを呼び出す caller
 on:
   issue_comment:
     types: [created]
@@ -14,9 +15,36 @@ on:
 permissions: {}
 
 jobs:
+  code-review:
+    if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/code-review')
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    uses: theindiehacker/github-workflows/.github/workflows/claude-code-review.yml@8edcea88c04a87b1f3017556464c89d414a9f328  # v1.0.1
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+  security-review:
+    # 実際の pwn request 対策 (ロール判定など) は呼び出し先 claude-security-review.yml の job if で行う。
+    # ここは code-review job と同様、呼び出し先を起動するかどうかの粗いフィルタ
+    if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/security-review')
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    uses: theindiehacker/github-workflows/.github/workflows/claude-security-review.yml@8edcea88c04a87b1f3017556464c89d414a9f328  # v1.0.1
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
   claude:
     permissions:
-      # 実装結果をブランチに push するため write
       contents: write
       actions: read
       pull-requests: write
@@ -24,6 +52,5 @@ jobs:
       id-token: write
     uses: theindiehacker/github-workflows/.github/workflows/claude.yml@8edcea88c04a87b1f3017556464c89d414a9f328  # v1.0.1
     secrets:
-      # どちらか一方だけが組織シークレットに登録されている前提。未登録側は空文字になる
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
