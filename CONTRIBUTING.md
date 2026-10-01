@@ -1,6 +1,6 @@
 # Contributing
 
-`theindiehacker/claude-plugins` は組織全体に配布する Claude Code プラグインのマーケットプレイスです。このドキュメントではプラグインの開発方法を説明します。
+`theindiehacker/fastship-plugins` は組織全体に配布する Claude Code プラグインのマーケットプレイスです。このドキュメントではプラグインの開発方法を説明します。
 
 ## 構成
 
@@ -49,5 +49,5 @@ PR の作成・更新・CI 監視・レビュー対応は `dev:push-pr` スキ�
 変更をローカルで確認する場合は、対象リポジトリで以下を実行してキャッシュを更新してください（`version` を上げていることが前提です）。
 
 ```
-/plugin marketplace update theindiehacker
+/plugin marketplace update fastship
 ```
