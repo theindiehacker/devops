@@ -333,11 +333,12 @@ Rules セクションで以下のチェックを外す:
 | `github-workflows` | `main` | `.github/workflows/actionlint.yml` | ワークフロー定義の構文 |
 | `github-workflows` | `main` | `.github/workflows/tflint.yml` | Terraform の lint |
 | `github-workflows` | `main` | `.github/workflows/terraform-fmt.yml` | Terraform の書式 |
+| `github-workflows` | `main` | `.github/workflows/terraform.yml` | Terraform の validate・lock ファイルと `required_providers` の整合・test(`*.tftest.hcl`) |
 | `github-workflows` | `main` | `.github/workflows/shellcheck.yml` | シェルスクリプトの lint |
 | `github-workflows` | `main` | `.github/workflows/python.yml` | Python の規約(uv での依存管理)・lint・書式・セキュリティ(ruff の `S` ルール)・型・依存関係 |
 | `github-workflows` | `main` | `.github/workflows/typescript.yml` | TypeScript の規約(Bun での依存管理)・lint・書式・型・未使用パッケージ |
 
-> 必須ワークフローは対象 repo のコードを実行しない解析に揃える。`python.yml` と `typescript.yml` の検査だけが例外で、`uv sync` / `bun install` による依存導入と、その環境上で動く mypy(プラグインを含む) / lint-imports / deptry / Biome / knip / tsc が対象 repo のコードに触れる。
+> 必須ワークフローは対象 repo のコードを実行しない解析に揃える。`python.yml` と `typescript.yml` と `terraform.yml` の検査だけが例外で、`uv sync` / `bun install` による依存導入と、その環境上で動く mypy(プラグインを含む) / lint-imports / deptry / Biome / knip / tsc、`terraform init` / `validate` / `test` が実行する provider・module が対象 repo のコードに触れる(いずれも `contents: read` のみで secrets は使わない)。
 > 検査の対象や厳しさ、src レイアウトの自パッケージの解決は、対象 repo の設定ファイル(`mypy.ini` / `[tool.deptry]` / `[build-system]` / `biome.json` / `knip.json` / `tsconfig.json` など)に従う。
 
 **導入時の前提** : 次に当てはまる repo は、対応するまで必須チェックが fail する。
@@ -347,6 +348,9 @@ Rules セクションで以下のチェックを外す:
 3. `bun.lock` をコミットしていない(`bun install --frozen-lockfile` が失敗する)
 4. `@biomejs/biome` / `knip` / `typescript` を devDependencies に持たない(`package.json` がある repo のみ対象)
 5. ruff の `S` ルール(bandit 相当。`S101` を除く)に違反している(repo の `ignore` では外せない。誤検知は `# noqa: Sxxx` か `per-file-ignores` で個別に外す)
+6. `.terraform.lock.hcl` に linux_amd64 のハッシュが無い(`terraform init -lockfile=readonly` で provider を検証できない。`terraform providers lock -platform=linux_amd64 -platform=darwin_arm64` などで追記する)
+7. `terraform test` がクラウドの認証情報を必要とする(認証情報は渡さないため、`command = plan` と `mock_provider` で完結するテストだけが通る)
+8. Terraform 1.16.0(`terraform.yml` で固定)で動かない `required_version` を宣言している
 
 **例外運用** : ランナーで依存を導入できない repo(private index の認証が必要など)が出た場合だけ、その repo を `Bypass list` に追加するか、`Target repositories` を `Dynamic list by property` 等に変更して対象から外す。規約・lint・書式の検査も併せて外れる。
 
@@ -425,7 +429,7 @@ renovatebot/github-action@*
 ※ 各リポジトリが新しい外部 action を使う場合はこのリストへの追加が必要(SHA ピン留めは各ワークフロー側で行う)。<br/>
 ※ `oven-sh/setup-bun` は `anthropics/claude-code-action` が内部で使用する action のため併せて許可する(「4.」)。<br/>
 ※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `python.yml` が使用する。<br/>
-※ `hashicorp/setup-terraform` は `terraform.yml` が使用する(「6.」)。
+※ `hashicorp/setup-terraform` は `terraform.yml` が使用する(「2.」の必須ワークフロー)。
 
 </details>
 
@@ -479,7 +483,7 @@ git ls-remote https://github.com/theindiehacker/github-workflows 'refs/tags/v1.0
 ---
 ## 5. 🏷️ リリースタグ
 
-呼び出し側が reusable workflow(「4.」「6.」)を `@<SHA>  # vX.Y.Z` で参照し、Renovate で更新できるようにするため、本リポジトリには semver のリリースタグを付ける。
+呼び出し側が reusable workflow(「4.」)を `@<SHA>  # vX.Y.Z` で参照し、Renovate で更新できるようにするため、本リポジトリには semver のリリースタグを付ける。
 
 **リリースの手順** : 🔗 本リポジトリ → Actions → **🏷️ Release** → **Run workflow**
 
@@ -536,63 +540,3 @@ Rules セクションで以下にチェック:
 最初のリリース(`v1.0.0`)の前に有効にしておく。
 
 </details>
-
----
-## 6. 🏗️ Terraform ワークフロー
-
-`terraform init` が要る検査(validate / test)を、各リポジトリから reusable workflow [`terraform.yml`](../.github/workflows/terraform.yml) として呼び出す。
-fmt / tflint / trivy は必須ワークフロー(2.)で実行済みのため、ここでは行わない。
-
-| 検査 | 内容 |
-|:----|:----|
-| validate | 対象ディレクトリごとに `terraform init -backend=false` → `terraform validate`。結果は PR に annotation で表示する |
-| lock ファイル | `.terraform.lock.hcl` があるディレクトリでは `init -lockfile=readonly` を使い、`required_providers` と合わない場合や、linux_amd64 のハッシュが無い場合に失敗させる |
-| test | ディレクトリ直下か `tests/` に `*.tftest.hcl` があれば `terraform test` を実行する |
-
-- 対象ディレクトリは、変更の有無に関係なく repo 全体(`*.tf` / `*.tf.json` を含むディレクトリ。`.terraform` 配下を除く)。Terraform のファイルが無いリポジトリでは何もせず success で終わる
-- CI は linux_amd64 で動く。lock ファイルには `terraform providers lock -platform=linux_amd64 -platform=darwin_arm64` のように、開発に使うプラットフォームに加えて linux_amd64 のハッシュも記録しておく
-- クラウドの認証情報・secrets は渡さない。`terraform test` は `command = plan` と `mock_provider` で完結するテストだけを書く(実際のクラウドに `apply` するテストは失敗する)
-- Terraform は `hashicorp/setup-terraform` で導入する(HashiCorp の `SHA256SUMS` の署名を検証してから導入する。「3.」の許可リストへの追加が必要)。provider は `actions/cache` でキャッシュする
-
-### 6.1 各リポジトリに呼び出し側のワークフローを追加する
-
-1. 「4.3」の 1. と同じ手順で、最新のリリースタグのコミット SHA を確認する
-2. `.github/workflows/terraform.yml` を以下の内容で追加し、`uses:` の `<SHA>` と `# vX.Y.Z` を 1. の値で書き換える
-
-```yaml
-name: "🏗️ terraform"
-
-on:
-  pull_request:
-
-permissions: {}
-
-# 同一 PR に連投された run のみ束ねて追い越しキャンセル
-concurrency:
-  group: terraform-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
-jobs:
-  terraform:
-    permissions:
-      contents: read
-    uses: theindiehacker/github-workflows/.github/workflows/terraform.yml@<SHA>  # vX.Y.Z
-    with:
-      terraform-version: "1.16.0"
-      # 省略時は *.tf / *.tf.json を含む全ディレクトリ。限定する場合は repo ルートからの相対パスを改行区切りで書く
-      # working-directories: |
-      #   modules/vpc
-      #   examples/vpc
-```
-
-| inputs | 必須 | 内容 |
-|:------|:----|:----|
-| `terraform-version` | ✅ | 使う Terraform の版を `x.y.z` で指定する(例: `1.16.0`)。`1.9.0` 以上(init の診断を annotation にするため `init -json` を使う)。`latest` や範囲指定は使えない |
-| `working-directories` | | 検査するディレクトリ(改行区切り)。省略時は自動検出 |
-
-- トリガーは `pull_request` にする。`pull_request_target` から呼び出すと失敗する(PR のコードを base の権限で実行させないため)
-- `permissions` は `contents: read` だけを渡す。`secrets` は渡さない
-- `concurrency` は呼び出し側で設定する(呼び出し先で設定すると、1 つの run から複数回呼んだときに互いにキャンセルされるため)
-- `terraform test` が使う provider・module は PR に書かれたものが実行されるため、権限を増やさないこと
-
-3. main にマージ後、PR で **Terraform を検査** の job が成功することを確認する

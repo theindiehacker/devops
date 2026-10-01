@@ -1,128 +1,85 @@
 name: "🏗️ terraform"
 
-# Terraform の validate / test を行う reusable workflow（呼び出し方は docs/SETUP.md の「6.」を参照）。
+# Terraform の validate / test を行う（init が要るため、terraform-fmt.yml / tflint.yml とは分ける）。
+# 結果は annotation にせず log に出す（修正するのも log を読むのも Claude Code の前提）。
 #
-# init が要る検査は Terraform の版や対象ディレクトリが repo ごとに異なり、inputs を受け取れない
-# 必須ワークフロー（terraform-fmt.yml / tflint.yml / trivy.yml）では扱えないため、呼び出し側から uses: で使う。
-# fmt / tflint / trivy は必須ワークフローで実行済みのため、ここでは重複させない。
-#
+# ⚠️ 必須ワークフローは on: のフィルタが無視され全 PR で起動するため、対象の判定は job 内で行う
+#    （All repositories 適用のため、Terraform の変更が無い PR では skip し run は success にする）。
 # terraform init / test は PR に書かれた provider・module・data source を実行するため、
-# 権限は contents: read のみとし、secrets も受け取らない（クラウドの認証情報が無い前提で動くテストだけが対象）。
+# 権限は contents: read（と paths-filter 用の pull-requests: read）のみとし、secrets も使わない。
 on:
-  workflow_call:
-    inputs:
-      terraform-version:
-        description: "使う Terraform の版（例: 1.16.0。1.9.0 以上）"
-        type: string
-        required: true
-      working-directories:
-        description: "検査するディレクトリ（repo ルートからの相対パスを改行区切りで指定）。省略時は *.tf / *.tf.json を含む全ディレクトリ"
-        type: string
-        required: false
-        default: ""
+  pull_request:
+    types: [opened, synchronize, reopened]
 
-permissions: {}
+permissions:
+  contents: read
+  pull-requests: read  # paths-filter の変更ファイル一覧取得に必要
+
+# 同一 PR に連投された run のみ束ねて追い越しキャンセル
+concurrency:
+  group: terraform-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
-  terraform:
+  check:
     name: "Terraform を検査"
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    permissions:
-      contents: read
-    # concurrency は呼び出し側で設定する（docs/SETUP.md「6.1」）。ここで group を決めると、1 つの run から
-    # working-directories や版を変えて複数回呼んだときに同じ group になり、互いにキャンセルされてしまう
     env:
       TF_IN_AUTOMATION: "1"
       TF_INPUT: "0"
       CHECKPOINT_DISABLE: "1"
     steps:
-      - name: "呼び出し元のイベントと版を検査"
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          VERSION: ${{ inputs.terraform-version }}
-        run: |
-          set -euo pipefail
-          # pull_request_target は base の権限・secrets で動くため、PR のコードを init / test で実行させない
-          if [ "${EVENT_NAME}" = "pull_request_target" ]; then
-            echo "::error::pull_request_target からは呼び出せません。呼び出し側のトリガーを pull_request にしてください"
-            exit 1
-          fi
-          # 版は x.y.z で固定する（latest や範囲指定だと、同じコミットでも実行のたびに版が変わる）。
-          # init の -json（診断を annotation にするために使う）は 1.9 から
-          if ! [[ "${VERSION}" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] \
-            || [ "${BASH_REMATCH[1]}" -lt 1 ] || { [ "${BASH_REMATCH[1]}" -eq 1 ] && [ "${BASH_REMATCH[2]}" -lt 9 ]; }; then
-            echo "::error::terraform-version には 1.9.0 以上の版を x.y.z の形で指定してください（例: 1.16.0）"
-            exit 1
-          fi
+      - name: "検査の要否を判定"
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
+        with:
+          # 削除も対象（モジュールの削除で、それを呼ぶ examples が壊れる）
+          filters: |
+            terraform:
+              - "**/*.tf"
+              - "**/*.tf.json"
+              - "**/*.tftest.hcl"
+              - "**/*.tftest.json"
+              - "**/.terraform.lock.hcl"
 
       - name: "Checkout"
+        if: steps.filter.outputs.terraform == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
+      # 変更があったディレクトリではなく repo 全体を検査する（examples/ はモジュールを相対パスで呼ぶため、
+      # モジュールだけを変えた PR で examples が壊れても検知できるようにする）
       - name: "検査対象を収集"
         id: collect
+        if: steps.filter.outputs.terraform == 'true'
         shell: bash
-        env:
-          WORKING_DIRECTORIES: ${{ inputs.working-directories }}
         run: |
           set -euo pipefail
-          # 対象 repo 由来のパスをそのまま埋めるとワークフローコマンドを偽装できるためエスケープする
-          escape() { local value=${1//%/%25}; value=${value//$'\r'/%0D}; printf '%s' "${value//$'\n'/%0A}"; }
-
-          # 変更があったディレクトリではなく repo 全体を検査する（examples/ はモジュールを相対パスで呼ぶため、
-          # モジュールだけを変えた PR で examples が壊れても検知できるようにする）
-          if [ -n "${WORKING_DIRECTORIES//[[:space:]]/}" ]; then
-            while IFS= read -r dir; do
-              # 空行は読み飛ばす。前後の空白、先頭の ./ と末尾の / を除く（"." や "./" は repo ルート）
-              if [ -z "${dir//[[:space:]]/}" ]; then continue; fi
-              if [[ "${dir}" == *$'\r'* ]]; then
-                echo "::error::working-directories に改行を含むパスは指定できません: $(escape "${dir}")" >&2
-                exit 1
-              fi
-              dir=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s|^(\./)+||; s|/+$||' <<< "${dir}")
-              if [ -z "${dir}" ]; then dir=.; fi
-              if [ ! -d "${dir}" ]; then
-                echo "::error::working-directories に指定したディレクトリが存在しません: $(escape "${dir}")" >&2
-                exit 1
-              fi
-              printf '%s\n' "${dir}"
-            done <<< "${WORKING_DIRECTORIES}" | sort -u > "${RUNNER_TEMP}/dirs.txt"
-          else
-            # git 管理下のファイルだけを見る。.terraform はキャッシュ・vendored モジュール置き場のため対象外
-            git ls-files -z -- ':(glob)**/*.tf' ':(glob)**/*.tf.json' \
-              | while IFS= read -r -d '' f; do
-                  # dirs.txt は 1 行 1 ディレクトリのため、改行を含むパスは扱えない（行が分かれてログの行頭に出ると、
-                  # ワークフローコマンドとして解釈されてしまう）
-                  if [[ "${f}" == *[$'\n\r']* ]]; then
-                    echo "::error::改行を含むパスは検査できません: $(escape "${f}")" >&2
-                    exit 1
-                  fi
-                  if [[ "${f}" == */* ]]; then printf '%s\n' "${f%/*}"; else echo .; fi
-                done \
-              | { grep -Ev '(^|/)\.terraform(/|$)' || true; } \
-              | sort -u > "${RUNNER_TEMP}/dirs.txt"
-          fi
+          # git 管理下の *.tf / *.tf.json があるディレクトリ。.terraform はキャッシュ・vendored モジュール置き場のため対象外。
+          # dirs.txt は 1 行 1 ディレクトリのため、改行を含むパスは扱えない
+          git ls-files -z -- ':(glob)**/*.tf' ':(glob)**/*.tf.json' \
+            | while IFS= read -r -d '' f; do
+                if [[ "${f}" == *[$'\n\r']* ]]; then echo "::error::改行を含むパスは検査できません"; exit 1; fi
+                if [[ "${f}" == */* ]]; then printf '%s\n' "${f%/*}"; else echo .; fi
+              done \
+            | { grep -Ev '(^|/)\.terraform(/|$)' || true; } \
+            | sort -u > "${RUNNER_TEMP}/dirs.txt"
           # パスは対象 repo 由来のため、行頭に出してワークフローコマンドとして解釈されないよう "- " を付ける
           sed 's/^/- /' "${RUNNER_TEMP}/dirs.txt"
-
-          # Terraform のファイルが無い repo では導入ごと skip し、run 全体は success にする
           if [ -s "${RUNNER_TEMP}/dirs.txt" ]; then
             echo "found=true" >> "${GITHUB_OUTPUT}"
           else
-            echo "対象のディレクトリがないため skip します"
             echo "found=false" >> "${GITHUB_OUTPUT}"
           fi
 
-      # HashiCorp の SHA256SUMS の署名を、action に同梱された HashiCorp の公開鍵で検証してから導入する。
-      # wrapper は stdout を step の output に流すため無効にする（-json の出力をそのままファイルに受ける）
+      # 版は repo の宣言を読まず中央で固定する（terraform-fmt.yml と揃える）
       - name: "Setup terraform"
         if: steps.collect.outputs.found == 'true'
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e  # v4.0.1
         with:
-          terraform_version: ${{ inputs.terraform-version }}
+          terraform_version: "1.16.0"
           terraform_wrapper: false
 
       # provider は lock ファイルの checksum と一致したものだけが使われるため、キャッシュの中身は init 時に検証される
@@ -144,111 +101,51 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${TF_PLUGIN_CACHE_DIR}"
-          # 対象 repo 由来のパスをそのまま埋めるとワークフローコマンドを偽装できるためエスケープする
+          # 対象 repo 由来のパスで ::group:: の行を分けられないようエスケープする
           escape() { local value=${1//%/%25}; value=${value//$'\r'/%0D}; printf '%s' "${value//$'\n'/%0A}"; }
 
-          # terraform の -json 出力（1 行 1 イベント）を log と annotation に変換する（terraform test の step でも使う）。
-          # filename は -chdir 先からの相対パスのため、repo ルート基準に直す
-          cat > "${RUNNER_TEMP}/annotate.jq" <<'JQ'
-          def esc: gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");
-          def prop: esc | gsub(":"; "%3A") | gsub(","; "%2C");
-          def norm: split("/") | reduce .[] as $p ([];
-            if $p == "." or $p == "" then .
-            elif $p == ".." and length > 0 and .[-1] != ".." then .[:-1]
-            else . + [$p] end) | join("/");
-          def annotate:
-            .diagnostic as $d
-            | if $lock != "" and $d.summary == "Provider lock file not updated" then
-                # lock ファイルに無いハッシュ（多くは開発者と異なる linux_amd64 のもの）を readonly のため追記できなかった。
-                # init は成功するが、導入した provider を lock ファイルで検証できず validate / test が失敗する
-                "::error file=\($lock | norm | prop)::\("\($tool): lock ファイルに linux_amd64 の provider のハッシュがありません（`terraform providers lock -platform=linux_amd64 -platform=darwin_arm64` などで、使う全プラットフォームのハッシュを追記してください）" | esc)"
-              else
-                (if $d.severity == "warning" then "warning" else "error" end) as $level
-                | ("\($tool): \($d.summary)" + (if ($d.detail // "") != "" then ": \($d.detail)" else "" end) | esc) as $message
-                | if $d.range then
-                    "::\($level) file=\("\($dir)/\($d.range.filename)" | norm | prop),line=\($d.range.start.line)::\($message)"
-                  elif $lock != "" and ($d.summary | test("lock file|dependenc"; "i")) then
-                    "::\($level) file=\($lock | norm | prop)::\($message)"
-                  else
-                    "::\($level)::\($message)（\($dir | esc)）"
-                  end
-              end;
-          # terraform の出力（PR のファイル名などを含む）は、行頭に出してワークフローコマンドとして解釈されないよう
-          # 各行に "│ " を付けて log に出す
-          . as $line | (fromjson? // {"@message": $line})
-          | ((.["@message"] // "") | gsub("\r"; "") | split("\n") | map("│ " + .) | join("\n")),
-            (select(.type == "diagnostic") | annotate)
-          JQ
-
-          # init に成功したディレクトリ（terraform test の対象）
           : > "${RUNNER_TEMP}/initialized.txt"
           status=0
           while IFS= read -r dir; do
             echo "::group::$(escape "${dir}")"
-
             # lock ファイルがあれば読み取り専用で使い、required_providers と合わなければ失敗させる
-            args=(-backend=false -json)
-            lock=""
-            if [ -f "${dir}/.terraform.lock.hcl" ]; then
-              args+=(-lockfile=readonly)
-              lock="${dir}/.terraform.lock.hcl"
-            fi
+            args=(-backend=false)
+            if [ -f "${dir}/.terraform.lock.hcl" ]; then args+=(-lockfile=readonly); fi
 
-            # init の診断（構文エラーや lock ファイルの不整合）は init 自身の出力から annotation にする。
-            # init に失敗したディレクトリの validate は、module・provider が未導入なことによる二次的なエラーしか出さないため実行しない
-            result="${RUNNER_TEMP}/init.jsonl"
-            init=true
-            terraform -chdir="${dir}" init "${args[@]}" > "${result}" || init=false
-            jq -Rr --arg tool "terraform init" --arg dir "${dir}" --arg lock "${lock}" -f "${RUNNER_TEMP}/annotate.jq" "${result}"
-            # lock ファイルに無いハッシュを readonly のため追記できなかった場合も、provider を検証できないため失敗とする
-            if [ "${init}" = "false" ] || { [ -n "${lock}" ] && grep -q '"summary":"Provider lock file not updated"' "${result}"; }; then
+            # init に失敗したディレクトリは validate しない（module・provider が未導入なことによる二次的なエラーしか出ない）。
+            # lock ファイルに無いハッシュ（多くは linux_amd64 のもの）を readonly のため追記できなかったときは、
+            # init は警告だけで成功するが provider を検証できないため失敗とする
+            if terraform -chdir="${dir}" init "${args[@]}" 2>&1 | tee "${RUNNER_TEMP}/init.log" \
+              && ! grep -q 'Provider lock file not updated' "${RUNNER_TEMP}/init.log"; then
+              printf '%s\n' "${dir}" >> "${RUNNER_TEMP}/initialized.txt"
+              terraform -chdir="${dir}" validate || status=1
+            else
               status=1
-              echo "::endgroup::"
-              continue
             fi
-            printf '%s\n' "${dir}" >> "${RUNNER_TEMP}/initialized.txt"
-
-            result="${RUNNER_TEMP}/validate.json"
-            terraform -chdir="${dir}" validate -json > "${result}" || status=1
-            jq -c '(.diagnostics // [])[] | {type: "diagnostic", "@message": "\(.severity): \(.summary)", diagnostic: .}' "${result}" \
-              | jq -Rr --arg tool "terraform validate" --arg dir "${dir}" --arg lock "${lock}" -f "${RUNNER_TEMP}/annotate.jq"
             echo "::endgroup::"
           done < "${RUNNER_TEMP}/dirs.txt"
           exit "${status}"
 
       - name: "terraform test"
-        # validate が失敗しても、init できたディレクトリのテストは実行する（導入の失敗などで validate が skip されたときは実行しない）
+        # validate が失敗しても、init できたディレクトリのテストは実行する
         if: ${{ !cancelled() && steps.validate.outcome != 'skipped' }}
         shell: bash
         env:
           TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
         run: |
           set -euo pipefail
-          # 対象 repo 由来のパスをそのまま埋めるとワークフローコマンドを偽装できるためエスケープする
           escape() { local value=${1//%/%25}; value=${value//$'\r'/%0D}; printf '%s' "${value//$'\n'/%0A}"; }
-
-          # テストはディレクトリ直下か tests/ にある *.tftest.hcl / *.tftest.json（terraform test の既定の探索先）
-          has_tests() {
-            local d
-            for d in "$1" "$1/tests"; do
-              if [ -d "${d}" ] && [ -n "$(find "${d}" -maxdepth 1 -type f \( -name '*.tftest.hcl' -o -name '*.tftest.json' \) -print -quit)" ]; then
-                return 0
-              fi
-            done
-            return 1
-          }
 
           status=0
           while IFS= read -r dir; do
-            if ! has_tests "${dir}"; then continue; fi
+            # terraform test はモジュールのディレクトリで実行する。テストはその直下か tests/ に置かれる（terraform の既定）
+            if ! compgen -G "${dir}/*.tftest.hcl" > /dev/null && ! compgen -G "${dir}/*.tftest.json" > /dev/null \
+              && ! compgen -G "${dir}/tests/*.tftest.hcl" > /dev/null && ! compgen -G "${dir}/tests/*.tftest.json" > /dev/null; then
+              continue
+            fi
             echo "::group::$(escape "${dir}")"
-
             # クラウドの認証情報は渡さないため、command = plan と mock_provider で完結するテストだけが通る
-            result="${RUNNER_TEMP}/test.jsonl"
-            terraform -chdir="${dir}" test -json > "${result}" || status=1
-
-            # 進捗を log に出し、失敗箇所を PR に annotation 表示する
-            jq -Rr --arg tool "terraform test" --arg dir "${dir}" --arg lock "" -f "${RUNNER_TEMP}/annotate.jq" "${result}"
+            terraform -chdir="${dir}" test || status=1
             echo "::endgroup::"
           done < "${RUNNER_TEMP}/initialized.txt"
           exit "${status}"
