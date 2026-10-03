@@ -50,8 +50,8 @@ jobs:
       # git grep ではなく grep -R で作業ツリーを読む（git grep は symlink のリンク先を読まず、-I を付けると
       # NUL バイト入りの .tf も読み飛ばすが、tflint はどちらも読み込んで ignore が効くため）。
       # 終了コード 2（読めないファイルあり）はマッチがあっても返るため、1（マッチなし）以外はすべて失敗にする。
-      # grep はパスをエスケープせず改行入りのパスで行が分かれるため、stderr も含め全行に "- " を付けて
-      # ワークフローコマンドとして解釈されないようにする
+      # grep はパスをエスケープせず改行（CR を含む）入りのパスで行が分かれるため、CR を可視化し stderr も含め
+      # 全行に "- " を付けてワークフローコマンドとして解釈されないようにする
       - name: "インライン ignore コメントの禁止"
         if: steps.filter.outputs.terraform == 'true'
         shell: bash
@@ -59,7 +59,7 @@ jobs:
           set -euo pipefail
           rc=0
           grep -RlF -D skip --include='*.tf' --exclude-dir=.git 'tflint-ignore' . > "${RUNNER_TEMP}/tflint-ignore.txt" 2>&1 || rc=$?
-          sed 's/^/- /' "${RUNNER_TEMP}/tflint-ignore.txt"
+          sed 's/\r/\\r/g; s/^/- /' "${RUNNER_TEMP}/tflint-ignore.txt"
           if [ "${rc}" -ne 1 ]; then
             echo "::error::tflint-ignore コメントがあるか、読み込めない .tf があります（ルールは github-workflows の .github/workflows/tflint.yml で全リポジトリ共通に固定しています）"
             exit 1
@@ -128,7 +128,8 @@ jobs:
             <<< "${TARGETS}" | sort -u > "${RUNNER_TEMP}/tflint-dirs.txt"
 
       # 対象 repo 由来のパスで ::group:: の行を分けられないようエスケープする。
-      # 結果は annotation にせず log に出す（既定の形式で、ファイル・行・ルール名と該当箇所が出る）
+      # 結果は annotation にせず log に出す（既定の形式で、ファイル・行・ルール名と該当箇所が出る）。
+      # 出力には対象 repo のパスやソースが含まれるため、ignore 検査と同様に全行を字下げしてワークフローコマンドを防ぐ
       - name: "tflint"
         if: steps.filter.outputs.terraform == 'true'
         shell: bash
@@ -138,7 +139,7 @@ jobs:
           status=0
           while IFS= read -r dir; do
             echo "::group::$(escape "${dir}")"
-            tflint --chdir="${dir}" || status=1
+            tflint --chdir="${dir}" 2>&1 | sed 's/\r/\\r/g; s/^/  /' || status=1
             echo "::endgroup::"
           done < "${RUNNER_TEMP}/tflint-dirs.txt"
           exit "${status}"
