@@ -72,6 +72,8 @@ jobs:
         env:
           # tflint --init が GitHub Releases から plugin を取得する際の rate limit 対策
           GITHUB_TOKEN: ${{ github.token }}
+          # 対象 repo の ./.tflint.d/plugins が優先されて plugin を差し替えられないよう固定する
+          TFLINT_PLUGIN_DIR: ${{ runner.temp }}/tflint-plugins
           TFLINT_CONFIG: |
             config {
               call_module_type = "local"
@@ -113,6 +115,8 @@ jobs:
       - name: "tflint"
         if: steps.filter.outputs.terraform == 'true'
         shell: bash
+        env:
+          TFLINT_PLUGIN_DIR: ${{ runner.temp }}/tflint-plugins
         run: |
           set -euo pipefail
           # 対象 repo 由来のパスで ::group:: の行を分けられないようエスケープする
