@@ -49,14 +49,17 @@ jobs:
 
       # git grep ではなく grep -R で作業ツリーを読む（git grep は symlink のリンク先を読まず、-I を付けると
       # NUL バイト入りの .tf も読み飛ばすが、tflint はどちらも読み込んで ignore が効くため）。
-      # 終了コード 2（読めないファイルあり）はマッチがあっても返るため、1（マッチなし）以外はすべて失敗にする
+      # 終了コード 2（読めないファイルあり）はマッチがあっても返るため、1（マッチなし）以外はすべて失敗にする。
+      # grep はパスをエスケープせず改行入りのパスで行が分かれるため、stderr も含め全行に "- " を付けて
+      # ワークフローコマンドとして解釈されないようにする
       - name: "インライン ignore コメントの禁止"
         if: steps.filter.outputs.terraform == 'true'
         shell: bash
         run: |
           set -euo pipefail
           rc=0
-          grep -RnF -D skip --include='*.tf' --exclude-dir=.git 'tflint-ignore' . || rc=$?
+          grep -RlF -D skip --include='*.tf' --exclude-dir=.git 'tflint-ignore' . > "${RUNNER_TEMP}/tflint-ignore.txt" 2>&1 || rc=$?
+          sed 's/^/- /' "${RUNNER_TEMP}/tflint-ignore.txt"
           if [ "${rc}" -ne 1 ]; then
             echo "::error::tflint-ignore コメントがあるか、読み込めない .tf があります（ルールは github-workflows の .github/workflows/tflint.yml で全リポジトリ共通に固定しています）"
             exit 1
