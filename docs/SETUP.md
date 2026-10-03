@@ -331,7 +331,7 @@ Rules セクションで以下のチェックを外す:
 | Repository | Branch | Workflow | 検査内容 |
 |:-----------|:-------|:---------|:--------|
 | `github-workflows` | `main` | `.github/workflows/actionlint.yml` | ワークフロー定義の構文 |
-| `github-workflows` | `main` | `.github/workflows/tflint.yml` | Terraform の lint |
+| `github-workflows` | `main` | `.github/workflows/tflint.yml` | Terraform の lint(terraform ruleset の `all` プリセット + aws / google ruleset。設定は全リポジトリ共通で固定) |
 | `github-workflows` | `main` | `.github/workflows/terraform-fmt.yml` | Terraform の書式 |
 | `github-workflows` | `main` | `.github/workflows/terraform.yml` | Terraform の validate・lock ファイルと `required_providers` の整合・test(`*.tftest.hcl`) |
 | `github-workflows` | `main` | `.github/workflows/shellcheck.yml` | シェルスクリプトの lint |
@@ -346,6 +346,7 @@ Rules セクションで以下のチェックを外す:
 > この条件なら、PR のコードが動いても、その repo の通常の CI と同じで越えられる権限の境界は無い。
 >
 > 検査の対象や厳しさ、src レイアウトの自パッケージの解決は、対象 repo の設定ファイル(`mypy.ini` / `[tool.deptry]` / `[build-system]` / `biome.json` / `knip.json` / `tsconfig.json` など)に従う。
+> ただし tflint の設定は `tflint.yml` に埋め込んで固定しており、対象 repo の `.tflint.hcl` とインラインの `tflint-ignore` コメントは使えない。
 
 **導入時の前提** : 次に当てはまる repo は、対応するまで必須チェックが fail する。
 
@@ -357,6 +358,7 @@ Rules セクションで以下のチェックを外す:
 6. `.terraform.lock.hcl` に linux_amd64 のハッシュが無い(`terraform init -lockfile=readonly` で provider を検証できない。`terraform providers lock -platform=linux_amd64 -platform=darwin_arm64` などで追記する)
 7. `terraform test` がクラウドの認証情報を必要とする(認証情報は渡さないため、`command = plan` と `mock_provider` で完結するテストだけが通る)
 8. Terraform 1.16.0(`terraform.yml` で固定)で動かない `required_version` を宣言している
+9. tflint(`tflint.yml` の固定設定)の違反がある、または `.tf` に `tflint-ignore` コメントがある(違反は変更したディレクトリのみ検査するが、`tflint-ignore` の禁止は repo 全体が対象)
 
 **例外運用** : ランナーで依存を導入できない repo(private index の認証が必要など)が出た場合だけ、その repo を `Bypass list` に追加するか、`Target repositories` を `Dynamic list by property` 等に変更して対象から外す。規約・lint・書式の検査も併せて外れる。
 
