@@ -2,6 +2,11 @@ name: "🧠 Claude / Security Review"
 
 on:
   workflow_call:
+    inputs:
+      effort:
+        description: "既定の effort (low / medium / high / xhigh / max)。コメントでの指定が優先。空なら Claude Code の既定値"
+        type: string
+        required: false
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         description: "claude setup-token で発行した OAuth トークン（ANTHROPIC_API_KEY とどちらか一方）"
@@ -52,6 +57,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # workflow injection 対策。run: の中で ${{ }} 展開しないこと
           COMMENT_BODY: ${{ github.event.comment.body }}
+          DEFAULT_EFFORT: ${{ inputs.effort }}
         run: |
           set -euo pipefail
           # --jq は欠損フィールドをリテラル "null" にするため、空と併せて弾く
@@ -62,7 +68,7 @@ jobs:
           fi
           echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
 
-          effort_arg=""
+          effort_arg="${DEFAULT_EFFORT:+--effort $DEFAULT_EFFORT}"
           # read は 1 行目のみ読む (2 行目以降は署名フッター等)
           read -ra words <<< "${COMMENT_BODY//$'\r'/}"
           for word in "${words[@]:1}"; do
