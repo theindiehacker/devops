@@ -16,7 +16,7 @@ concurrency:
 env:
   # ツール版は対象 repo の宣言を読まず中央で固定する（2 桁の版が float に化けないよう引用符で囲む）
   # renovate: datasource=pypi depName=uv
-  UV_VERSION: "0.12.19"
+  UV_VERSION: "0.12.21"
   # renovate: datasource=pypi depName=ruff
   RUFF_VERSION: "0.16.9"
   # renovate: datasource=pypi depName=mypy
