@@ -19,6 +19,17 @@
       ],
       "datasourceTemplate": "pypi",
       "versioningTemplate": "pep440"
+    },
+    {
+      "description": "tflint.yml に埋め込んだ tflint 設定の plugin version を GitHub Releases の最新版に更新する（タグは v 付き、設定には v を除いて書く）",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/tflint\\.yml$/"],
+      "matchStrings": [
+        "version\\s*=\\s*\"(?<currentValue>[^\"]+)\"\\s+source\\s*=\\s*\"github\\.com/(?<depName>[^\"]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$",
+      "versioningTemplate": "semver"
     }
   ],
   "packageRules": [
