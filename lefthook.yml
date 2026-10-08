@@ -6,8 +6,8 @@ pre-commit:
   jobs:
     - name: security:check:gitleaks:staged
       run: task security:check:gitleaks:staged
-    - name: style:fix
-      run: task style:fix
+    - name: style:fix:staged
+      run: task style:fix:staged
       stage_fixed: true
 
 # 重い検査（依存の導入・mypy・trivy など）は push 時にまとめて行う

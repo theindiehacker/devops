@@ -52,6 +52,7 @@ graph TD;
 | `security:check:ghalint` | `ghalint.yml` | ghalint |
 | `style:check:line` | – | 1 ファイル 500 行まで（`*.ts` / `*.py`） |
 | `security:check:gitleaks:staged` | – | pre-commit 用（staged の変更だけ） |
+| `style:fix:staged` | – | pre-commit 用（staged のファイルだけを自動修正。触っていないファイルの違反でコミットを止めない） |
 
 ### ローカルと CI の違い
 
@@ -115,7 +116,7 @@ sequenceDiagram
 
 ```mermaid
 graph LR;
-    commit("git commit") --> g("security:check:gitleaks:staged") --> f("style:fix<br/>（直した差分を stage）")
+    commit("git commit") --> g("security:check:gitleaks:staged") --> f("style:fix:staged<br/>（直した差分を stage）")
     push("git push") --> c("style:check") --> s("security:check")
 ```
 

@@ -24,7 +24,9 @@ vars:
   # renovate: datasource=pypi depName=deptry
   DEPTRY_VERSION: "0.25.1"
 
-  # 各タスクの bash の先頭に埋め込む共通処理
+  # 各タスクの bash の先頭に埋め込む共通処理。
+  # スクリプトは一時ファイルに書き出して stdin を /dev/null にして実行する（stdin から渡すと、対象 repo のコード
+  # （postinstall やビルドフック）が stdin を読み切ったときに残りのスクリプトと最後の exit が消え、失敗が成功扱いになるため）
   LIB: |
     set -euo pipefail
     # 起動したディレクトリではなく repo のルートで検査する（FILES のパスも repo ルートからの相対）
@@ -122,44 +124,73 @@ tasks:
       - style:check:actionlint
 
   style:fix:
-    desc: ✏️ スタイル自動修正
+    desc: ✏️ スタイル自動修正（git 管理下の全ファイル）
     dir: '{{.USER_WORKING_DIR}}'
+    env:
+      STAGED: '{{.STAGED}}'
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
-      # 自動修正できない違反が残ると失敗する。残りの修正も行うため、最後にまとめて失敗させる
+      # 対象のファイルを NUL 区切りで出す。STAGED=true のときは staged のファイルだけ（カレントディレクトリからの相対パス）
+      fix_targets() {
+        if [ "${STAGED}" = true ]; then git diff --cached --name-only --relative -z --diff-filter=ACMR -- "$@"; else git ls-files -z -- "$@"; fi
+      }
+      # 自動修正できない違反が残ると失敗する。残りの修正も行うため、最後にまとめて失敗させる。
+      # ファイルを明示して渡すため、共通設定の exclude を効かせるよう --force-exclude を付ける
       status=0
-      if [ -n "$(git ls-files -- ':(glob)**/*.py' ':(glob)**/*.pyi')" ]; then
+      fix_targets ':(glob)**/*.py' ':(glob)**/*.pyi' > "${tmp}/python"
+      if [ -s "${tmp}/python" ]; then
         config=$(config_dir)/pyproject.toml
-        ruff check --fix --config "${config}" . || status=1
-        ruff format --config "${config}" . || status=1
+        xargs -0 ruff check --fix --force-exclude --config "${config}" -- < "${tmp}/python" || status=1
+        xargs -0 ruff format --force-exclude --config "${config}" -- < "${tmp}/python" || status=1
       fi
-      biome_config=$(config_dir)/biome.json
       ts_roots > "${tmp}/roots"
-      while IFS= read -r root; do
-        (cd "${root}" && git ls-files -z | xargs -0 biome check --write --config-path="${biome_config}" --no-errors-on-unmatched --) || status=1
-      done < "${tmp}/roots"
-      if [ -n "$(git ls-files -- ':(glob)**/*.tf' ':(glob)**/*.tfvars' ':(glob)**/*.tftest.hcl')" ]; then
-        terraform fmt -recursive || status=1
+      if [ -s "${tmp}/roots" ]; then
+        biome_config=$(config_dir)/biome.json
+        top=${PWD}
+        while IFS= read -r root; do
+          cd "${top}/${root}"
+          fix_targets > "${tmp}/biome"
+          if [ -s "${tmp}/biome" ]; then
+            xargs -0 biome check --write --config-path="${biome_config}" --no-errors-on-unmatched -- < "${tmp}/biome" || status=1
+          fi
+        done < "${tmp}/roots"
+        cd "${top}"
       fi
+      fix_targets ':(glob)**/*.tf' ':(glob)**/*.tfvars' ':(glob)**/*.tftest.hcl' > "${tmp}/terraform"
+      while IFS= read -r -d '' file; do
+        terraform fmt -- "${file}" || status=1
+      done < "${tmp}/terraform"
       exit "${status}"
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
+
+  style:fix:staged:
+    desc: ✏️ staged のファイルだけをスタイル自動修正（pre-commit 用。触っていないファイルの違反でコミットを止めない）
+    cmds:
+      - task: style:fix
+        vars:
+          STAGED: "true"
 
   style:check:line:
     desc: ✏️ 1 ファイルの行数チェック（500 行超は設計に問題がある兆候）
     dir: '{{.USER_WORKING_DIR}}'
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
       git ls-files -z -- ':(glob)**/*.ts' ':(glob)**/*.py' \
         | xargs -0 awk 'FNR > 500 { print FILENAME ": 500 行を超えています"; bad = 1; nextfile } END { exit bad }'
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
 
   style:check:python:rule:
     desc: 🐍 uv で依存を管理しているか（git 上のファイルだけを見て判定し、対象 repo のコードは動かさない）
     dir: '{{.USER_WORKING_DIR}}'
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
       status=0
       # requirements 系は依存管理として使われているものだけを対象にする
@@ -217,12 +248,14 @@ tasks:
       done < "${tmp}/importlinters"
       exit "${status}"
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
 
   style:check:python:ruff:
     desc: 🐍 ruff で lint・書式を検査
     dir: '{{.USER_WORKING_DIR}}'
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
       if [ -z "$(git ls-files -- ':(glob)**/*.py' ':(glob)**/*.pyi')" ]; then exit 0; fi
       config=$(config_dir)/pyproject.toml
@@ -231,6 +264,7 @@ tasks:
       ruff format --check --diff --config "${config}" . || status=1
       exit "${status}"
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
 
   style:check:python:types:
     desc: 🐍 uv.lock ごとに lock の整合・mypy・lint-imports・deptry を検査（対象 repo の依存を導入して実行する）
@@ -240,7 +274,8 @@ tasks:
       IMPORT_LINTER_VERSION: '{{.IMPORT_LINTER_VERSION}}'
       DEPTRY_VERSION: '{{.DEPTRY_VERSION}}'
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
       git ls-files -z -- ':(glob)**/uv.lock' | dirs > "${tmp}/projects"
       if [ ! -s "${tmp}/projects" ]; then exit 0; fi
@@ -275,7 +310,11 @@ tasks:
           fi
         done < "${tmp}/projects"
         files=()
-        while IFS= read -r -d '' file; do files+=("${file}"); done \
+        # 同じモジュールの .py と .pyi を両方渡すと mypy が Duplicate module で失敗するため、.pyi がある .py は除く
+        while IFS= read -r -d '' file; do
+          if [[ "${file}" == *.py ]] && [ -e "${file}i" ]; then continue; fi
+          files+=("${file}")
+        done \
           < <(git ls-files -z -- ':(glob)**/*.py' ':(glob)**/*.pyi' ${excludes[@]+"${excludes[@]}"})
         if [ "${#files[@]}" -gt 0 ]; then
           # プロジェクトに合わせて mypy_path と plugins を足す（[tool.mypy] は pyproject.toml の最後のテーブル）
@@ -315,12 +354,14 @@ tasks:
       done 3< "${tmp}/projects"
       exit "${status}"
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
 
   style:check:typescript:
     desc: 🔷 TypeScript を biome・knip・tsc で検査（対象 repo の依存を bun で導入して実行する）
     dir: '{{.USER_WORKING_DIR}}'
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
       ts_roots > "${tmp}/roots"
       if [ ! -s "${tmp}/roots" ]; then exit 0; fi
@@ -343,12 +384,14 @@ tasks:
       done 3< "${tmp}/roots"
       exit "${status}"
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
 
   style:check:terraform:fmt:
     desc: 🏗️ Terraform の書式を検査
     dir: '{{.USER_WORKING_DIR}}'
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
       # fmt は -recursive を付けなければ指定ディレクトリ直下だけを見る。CI では変更したディレクトリだけを検査する
       targets ':(glob)**/*.tf' ':(glob)**/*.tfvars' ':(glob)**/*.tftest.hcl' | dirs > "${tmp}/dirs"
@@ -358,6 +401,7 @@ tasks:
       done < "${tmp}/dirs"
       exit "${status}"
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
 
   style:check:terraform:
     desc: 🏗️ Terraform の validate・test（init が要るため provider・module を実行する）
@@ -367,7 +411,8 @@ tasks:
       TF_INPUT: "0"
       CHECKPOINT_DISABLE: "1"
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
       # 変更があったディレクトリではなく repo 全体を検査する（examples/ はモジュールを相対パスで呼ぶため）
       git ls-files -z -- ':(glob)**/*.tf' ':(glob)**/*.tf.json' | dirs > "${tmp}/dirs"
@@ -404,12 +449,14 @@ tasks:
       done < "${tmp}/initialized"
       exit "${status}"
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
 
   style:check:tflint:
     desc: 🏗️ Terraform を tflint で lint（設定は全リポジトリ共通。tflint-ignore コメントは禁止）
     dir: '{{.USER_WORKING_DIR}}'
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
       targets ':(glob)**/*.tf' ':(glob)**/*.tf.json' ':(glob)**/*.tfvars' ':(glob)**/*.tfvars.json' | dirs > "${tmp}/dirs"
       if [ ! -s "${tmp}/dirs" ]; then exit 0; fi
@@ -440,27 +487,32 @@ tasks:
       done < "${tmp}/dirs"
       exit "${status}"
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
 
   style:check:shellcheck:
     desc: 🐚 シェルスクリプトを shellcheck で lint
     dir: '{{.USER_WORKING_DIR}}'
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
       targets ':(glob)**/*.sh' ':(glob)**/*.bash' ':(glob)**/*.ksh' > "${tmp}/targets"
       if [ ! -s "${tmp}/targets" ]; then exit 0; fi
       xargs -0 shellcheck --severity=warning --external-sources -- < "${tmp}/targets"
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
 
   style:check:actionlint:
     desc: 🧹 GitHub Actions のワークフロー定義を actionlint で構文チェック
     dir: '{{.USER_WORKING_DIR}}'
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
       if [ -z "$(git ls-files -- '.github/workflows/*.yml' '.github/workflows/*.yaml')" ]; then exit 0; fi
       actionlint
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
 
   # ============ 🛡️ セキュリティ ============
 
@@ -478,11 +530,13 @@ tasks:
     desc: 🔑 gitleaks でシークレットを検知（ローカルは全履歴、CI は LOG_OPTS の範囲）
     dir: '{{.USER_WORKING_DIR}}'
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
       # --ignore-gitleaks-allow: インライン allow コメントを無効化（抑制は承認必須の .gitleaksignore に限定する）
       gitleaks git . --redact --verbose --exit-code 1 --ignore-gitleaks-allow ${LOG_OPTS:+"--log-opts=${LOG_OPTS}"}
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
 
   security:check:gitleaks:staged:
     desc: 🔑 gitleaks で staged の変更からシークレットを検知（pre-commit 用）
@@ -493,16 +547,20 @@ tasks:
     desc: 🛡️ Semgrep CE（p/default・severity ERROR）でアプリケーションコードをスキャン
     dir: '{{.USER_WORKING_DIR}}'
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
       # Semgrep は依存も含めてハッシュ固定した tools/semgrep/requirements.txt から専用の venv に入れる（--require-hashes で改ざんを検知する）。
       # venv は requirements.txt の内容ごとに作り、一度作ったものを使い回す
       requirements=$(config_dir)/tools/semgrep/requirements.txt
       digest=$(shasum -a 256 < "${requirements}" | cut -c1-16)
       venv="${XDG_CACHE_HOME:-${HOME}/.cache}/devops/semgrep-${digest}"
-      if [ ! -x "${venv}/bin/semgrep" ]; then
+      # 導入が最後まで終わった印（.complete）が無ければ作り直す（途中で失敗・中断した venv を使い続けないため）
+      if [ ! -e "${venv}/.complete" ]; then
+        rm -rf "${venv}"
         uv venv --quiet --python 3.12 "${venv}"
         uv pip install --quiet --python "${venv}/bin/python" --require-hashes -r "${requirements}"
+        touch "${venv}/.complete"
       fi
       # --disable-nosem: インライン nosemgrep コメントを無効化（抑制は承認必須の .semgrepignore に限定する）
       "${venv}/bin/semgrep" scan \
@@ -515,6 +573,7 @@ tasks:
         ${BASELINE:+--baseline-commit "${BASELINE}"} \
         .
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
 
   security:check:trivy:
     desc: 🛡️ Trivy で依存パッケージの脆弱性と IaC の設定ミスをスキャン（IMAGE を渡すとビルド済みイメージをスキャン）
@@ -524,7 +583,8 @@ tasks:
       TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
       TRIVY_JAVA_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1,public.ecr.aws/aquasecurity/trivy-java-db:1
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
       # Trivy にはインライン ignore を無効化するオプションが無いため、コメント自体を禁止する。
       # tfsec 互換の接頭辞も Trivy は ignore として扱うので両方を対象にする（トークンの分割はこのファイル自身の検知を防ぐため）
@@ -570,12 +630,14 @@ tasks:
         trivy fs "${args[@]}" .
       fi
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
 
   security:check:zizmor:
     desc: 🛡️ GitHub Actions の設定を zizmor で静的解析（severity HIGH 以上）
     dir: '{{.USER_WORKING_DIR}}'
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
       # zizmor がスキャンする種類（workflow / action / dependabot / pre-commit。後者 2 つはファイル名だけで判定され任意のディレクトリから収集される）
       pathspecs=(
@@ -624,22 +686,26 @@ tasks:
       if [ "${#offline[@]}" -gt 0 ]; then zizmor "${args[@]}" --no-online-audits "${offline[@]}" || rc=$?; fi
       exit "${rc}"
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
 
   security:check:ghalint:
     desc: 🛡️ GitHub Actions のワークフローを ghalint でポリシーチェック（permissions・SHA 固定など）
     dir: '{{.USER_WORKING_DIR}}'
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
       if [ -z "$(git ls-files -- '.github/workflows/*.yml' '.github/workflows/*.yaml')" ]; then exit 0; fi
       ghalint run
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
 
   security:check:ruff:
     desc: 🛡️ ruff の S ルール（bandit 相当。S101 を除く）で検査
     dir: '{{.USER_WORKING_DIR}}'
     cmd: |
-      bash <<'BASH'
+      script=$(mktemp)
+      cat > "${script}" <<'BASH'
       {{.LIB}}
       if [ -z "$(git ls-files -- ':(glob)**/*.py' ':(glob)**/*.pyi')" ]; then exit 0; fi
       config=$(config_dir)/pyproject.toml
@@ -648,3 +714,4 @@ tasks:
       git ls-files -z -- ':(glob)**/*.py' ':(glob)**/*.pyi' \
         | xargs -0 ruff check --no-fix --config "${config}" --select S --ignore S101 --
       BASH
+      bash "${script}" < /dev/null; status=$?; rm -f "${script}"; exit "${status}"
