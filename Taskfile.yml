@@ -78,12 +78,13 @@ vars:
       local dir="${XDG_CACHE_HOME:-${HOME}/.cache}/devops/${DEVOPS_REF}"
       if [ ! -d "${dir}" ]; then
         # deps は並列に実行されるため、別の場所に clone してから置く
-        # $(config_dir) の中では set -e が効かないため、失敗は明示的に返す
+        # $(config_dir) の中では set -e が効かないため、失敗は明示的に返す。
+        # mv が同じファイルシステム内の rename（アトミック）になるよう、キャッシュと同じディレクトリに clone する
         local work
-        work=$(mktemp -d) || return 1
-        git clone --quiet --depth 1 --branch "${DEVOPS_REF}" https://github.com/theindiehacker/devops.git "${work}/devops" >&2 || return 1
         mkdir -p "$(dirname "${dir}")" || return 1
-        if [ ! -d "${dir}" ]; then mv "${work}/devops" "${dir}" || return 1; fi
+        work=$(mktemp -d "$(dirname "${dir}")/.clone.XXXXXX") || return 1
+        git clone --quiet --depth 1 --branch "${DEVOPS_REF}" https://github.com/theindiehacker/devops.git "${work}/devops" >&2 || { rm -rf "${work}"; return 1; }
+        if [ ! -d "${dir}" ]; then mv "${work}/devops" "${dir}" || { rm -rf "${work}"; return 1; }; fi
         rm -rf "${work}"
       fi
       printf '%s' "${dir}"
