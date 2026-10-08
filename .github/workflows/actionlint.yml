@@ -1,7 +1,6 @@
 name: "🧹 actionlint"
 
 # GitHub Actions のワークフロー定義を actionlint で構文チェックする。
-# チェックの中身（フラグ・ツールの版）は .github/Taskfile.yml の actionlint タスクが正で、ここはそれを呼ぶだけ。
 #
 # ⚠️ 必須ワークフローは on: のフィルタ（paths / branches / types 等）が無視され全 PR で起動されるため、
 #    「ワークフローファイルが変更されたか」の判定は本ワークフロー内で行う。
@@ -45,9 +44,29 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: "Install actionlint"
+        if: steps.filter.outputs.workflows == 'true'
+        shell: bash
+        env:
+          # renovate: datasource=github-release-attachments depName=rhysd/actionlint
+          VERSION: v1.7.12
+          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          ARCHIVE="actionlint_${VERSION#v}_linux_amd64.tar.gz"
+          curl -sSfL -o "$ARCHIVE" "https://github.com/rhysd/actionlint/releases/download/${VERSION}/${ARCHIVE}"
+
+          # SHA-256 検証（改ざん・破損を検知）
+          echo "${SHA256}  ${ARCHIVE}" | sha256sum -c -
+
+          sudo tar -xz -C /usr/local/bin -f "$ARCHIVE" actionlint
+          rm -f "$ARCHIVE"
+          actionlint --version
+
       - name: "actionlint"
         if: steps.filter.outputs.workflows == 'true'
-        uses: theindiehacker/devops/.github/actions/task@main  # Taskfile と同じ main で動かす（除外設定は .github/ghalint.yml / zizmor.yml）
-        with:
-          task: actionlint
-          tools: task actionlint shellcheck  # actionlint は PATH 上の shellcheck で run: を検査する
+        shell: bash
+        run: |
+          set -euo pipefail
+          # workflow command 形式で出力し、検出箇所を PR に annotation 表示する
+          actionlint -format $'{{range $err := .}}::error file={{$err.Filepath}},line={{$err.Line}},col={{$err.Column}}::{{$err.Message}}\n{{end}}'

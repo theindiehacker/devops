@@ -11,7 +11,3 @@ excludes:
   - policy_name: checkout_persist_credentials_should_be_false
     workflow_file_path: .github/workflows/claude.yml
     job_name: claude
-  # 必須ワークフローは devops の Taskfile と同じ main で動かすため、devops 自身の composite action だけ @main で参照する
-  # （必須ワークフロー自体も main を参照しており、信頼境界は変わらない: docs/TASKFILE-CI.md）
-  - policy_name: action_ref_should_be_full_length_commit_sha
-    action_name: theindiehacker/devops/.github/actions/task

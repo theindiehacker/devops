@@ -257,7 +257,7 @@ ghalint.yaml
 
 ※ `trivy.yaml`(リポジトリ直下)は Trivy が自動読込する設定ファイルで、`ignorefile` / `ignore-policy` により抑制先を差し替えられるため対象に含める。レビュー時はこの 2 項目が上記対象外のファイルを指していないかを確認する<br/>
 ※ `**/.semgrepignore` は Semgrepignore v2(Semgrep 1.117 以降のデフォルト)でサブディレクトリの `.semgrepignore` も有効になるため対象に含める<br/>
-※ zizmor の設定は devops 側(`.github/scripts/zizmor.sh` の `--config` / `--no-config`)で `.github/zizmor.yml` に固定しているため、自動探索され得る他パス(リポジトリ直下の `zizmor.yml` 等)の列挙は不要
+※ zizmor の設定はワークフロー側(`.github/workflows/zizmor.yml` の `--config` / `--no-config`)で `.github/zizmor.yml` に固定しているため、自動探索され得る他パス(リポジトリ直下の `zizmor.yml` 等)の列挙は不要
 
 </details>
 
@@ -431,7 +431,6 @@ docker/build-push-action@*,
 dorny/paths-filter@*,
 google-github-actions/auth@*,
 hashicorp/setup-terraform@*,
-jdx/mise-action@*,
 oven-sh/setup-bun@*,
 renovatebot/github-action@*,
 terraform-linters/setup-tflint@*
@@ -441,7 +440,6 @@ terraform-linters/setup-tflint@*
 ※ `oven-sh/setup-bun` は `anthropics/claude-code-action` が内部で使用する action のため併せて許可する(「4.」)。<br/>
 ※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `python.yml` が使用する。<br/>
 ※ `hashicorp/setup-terraform` は `terraform.yml` / `terraform-fmt.yml`、`terraform-linters/setup-tflint` は `tflint.yml` が使用する(「2.」の必須ワークフロー)。<br/>
-※ `jdx/mise-action` は devops の composite action(`.github/actions/task`)が mise の導入に使用する(actionlint / ghalint / zizmor の必須ワークフローから呼ばれる。docs/TASKFILE-CI.md)。<br/>
 ※ `google-github-actions/auth` は Workload Identity 連携で Google Cloud に認証する公式 action(各リポジトリの Terraform plan / apply が使用する)。
 
 </details>

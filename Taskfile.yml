@@ -2,10 +2,6 @@ version: '3'
 
 silent: true
 
-includes:
-  github:
-    taskfile: ./.github/Taskfile.yml
-
 tasks:
   default:
     cmd: task --list
@@ -19,28 +15,17 @@ tasks:
       - PATH="$HOME/.local/bin:$PATH" mise install --yes  # mise をセットアップ
       - echo "done!✨"
 
-  style:check:line:
-    desc: ✏️ 1ファイルの行数チェック / 1ファイルが膨大になるということは何か問題がある
-    internal: true
-    cmd: |
-      find . \
-        \( -name "node_modules" -o -name "dist" -o -name "build" -o -name ".venv" \) -prune -o \
-        -type f \( -name "*.ts" -o -name "*.py" \) \
-        -exec awk 'FNR > 500 {print FILENAME " exceeds limit"; bad = 1; nextfile} END {exit bad}' {} +
-
   style:check:
     desc: ✏️ スタイルチェック
-    deps:
-      - style:check:line
-      - github:style:check
+    cmds:
+      # Python / 全ファイルの凝集度をチェック
+      - cohesion --files . --verbose
 
   style:fix:
     desc: ✏️ スタイル自動修正
 
   security:check:
     desc: 🛡️ セキュリティチェック
-    deps:
-      - github:security:check
     cmds:
       # 🔑 gitleaks: シークレット情報が GitHub リポジトリに push されないようにする
       - gitleaks git --pre-commit --redact --staged --verbose --ignore-gitleaks-allow
