@@ -1,0 +1,31 @@
+version: '3'
+
+silent: true
+
+tasks:
+  default:
+    cmd: task --list
+
+  init:
+    desc: 🚀 セットアップ
+    cmds:
+      - echo "これからプロジェクトのセットアップを実施します🚀"
+      # mise 未導入なら ~/.local/bin に入れる（導入直後は PATH に無いため、次の行で PATH に足して呼ぶ）
+      - command -v mise >/dev/null || curl -fsSL https://mise.run | sh
+      - PATH="$HOME/.local/bin:$PATH" mise install --yes  # mise をセットアップ
+      - echo "done!✨"
+
+  style:check:
+    desc: ✏️ スタイルチェック
+    cmds:
+      # Python / 全ファイルの凝集度をチェック
+      - cohesion --files . --verbose
+
+  style:fix:
+    desc: ✏️ スタイル自動修正
+
+  security:check:
+    desc: 🛡️ セキュリティチェック
+    cmds:
+      # 🔑 gitleaks: シークレット情報が GitHub リポジトリに push されないようにする
+      - gitleaks git --pre-commit --redact --staged --verbose --ignore-gitleaks-allow

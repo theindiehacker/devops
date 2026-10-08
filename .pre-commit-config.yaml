@@ -1,7 +1,0 @@
-repos:
-  - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.28.0
-    hooks:
-      - id: gitleaks
-        # インライン allow コメント無効
-        args: ["--ignore-gitleaks-allow"]

@@ -1,0 +1,7 @@
+# git フックの登録（lefthook install）は mise.toml の postinstall フックで行う
+pre-commit:
+  # 前のジョブが落ちたら後続を打ち切る（整形前のコードを検証したりテストしたりしても意味がないため）
+  piped: true
+  commands:
+    security:check:
+      run: task security:check
