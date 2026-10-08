@@ -23,7 +23,8 @@ git -c core.quotePath=false ls-files --cached --others --exclude-standard -- "${
 targets=()
 while IFS= read -r t; do
   # 削除済み（未ステージ）の tracked ファイルは除く
-  if [ -f "${t}" ]; then targets+=("${t}"); fi
+  # ./ を付ける: `--config=x/action.yml` のような - 始まりのパスを zizmor にオプションとして解釈させない
+  if [ -f "${t}" ]; then targets+=("./${t}"); fi
 done < "${list}"
 
 if [ "${#targets[@]}" -eq 0 ]; then
