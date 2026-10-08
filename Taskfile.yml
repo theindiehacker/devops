@@ -24,8 +24,11 @@ tasks:
   style:fix:
     desc: ✏️ スタイル自動修正
 
+  security:gitleaks:
+    desc: 🛡️ セキュリティチェック / 🔑 シークレット情報の検知
+    cmd: gitleaks git --pre-commit --redact --staged --verbose --ignore-gitleaks-allow
+
   security:check:
     desc: 🛡️ セキュリティチェック
-    cmds:
-      # 🔑 gitleaks: シークレット情報が GitHub リポジトリに push されないようにする
-      - gitleaks git --pre-commit --redact --staged --verbose --ignore-gitleaks-allow
+    deps:
+      - security:gitleaks
