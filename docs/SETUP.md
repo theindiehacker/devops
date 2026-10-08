@@ -162,7 +162,7 @@ Rules セクションで以下のチェックを外す:
 
 | Repository | Branch | Workflow |
 |:-----------|:-------|:---------|
-| `github-workflows` | `main` | `.github/workflows/gitleaks.yml` |
+| `devops` | `main` | `.github/workflows/gitleaks.yml` |
 
  - ✅ **Do not require workflows on creation**
 
@@ -189,10 +189,10 @@ Rules セクションで以下のチェックを外す:
 
 | Repository | Branch | Workflow |
 |:-----------|:-------|:---------|
-| `github-workflows` | `main` | `.github/workflows/trivy.yml` |
-| `github-workflows` | `main` | `.github/workflows/zizmor.yml` |
-| `github-workflows` | `main` | `.github/workflows/semgrep.yml` |
-| `github-workflows` | `main` | `.github/workflows/ghalint.yml` |
+| `devops` | `main` | `.github/workflows/trivy.yml` |
+| `devops` | `main` | `.github/workflows/zizmor.yml` |
+| `devops` | `main` | `.github/workflows/semgrep.yml` |
+| `devops` | `main` | `.github/workflows/ghalint.yml` |
 
 - ✅ **Do not require workflows on creation**
 
@@ -272,7 +272,7 @@ ghalint.yaml
 | Ruleset Name | `🛠️ 検知ワークフロー変更の承認必須化`    |
 | Enforcement status | `Active`                 |
 | Bypass list | Renovate 用 GitHub App(`renovate-<org 名>`)を `For pull requests only` で追加(「✅ PR の承認を必須化」を参照)<br/>承認者が 1 人だけの場合は「1.」の注意書きを参照 |
-| Target repositories | `Select repositories` → `github-workflows` のみ |
+| Target repositories | `Select repositories` → `devops` のみ |
 | Target branches | `Include default branch` |
 
 Rules セクションで以下のチェックを外す:
@@ -330,13 +330,13 @@ Rules セクションで以下のチェックを外す:
 
 | Repository | Branch | Workflow | 検査内容 |
 |:-----------|:-------|:---------|:--------|
-| `github-workflows` | `main` | `.github/workflows/actionlint.yml` | ワークフロー定義の構文 |
-| `github-workflows` | `main` | `.github/workflows/tflint.yml` | Terraform の lint(terraform ruleset の `all` プリセット + aws / google ruleset。設定は全リポジトリ共通で固定) |
-| `github-workflows` | `main` | `.github/workflows/terraform-fmt.yml` | Terraform の書式 |
-| `github-workflows` | `main` | `.github/workflows/terraform.yml` | Terraform の validate・lock ファイルと `required_providers` の整合・test(`*.tftest.hcl`) |
-| `github-workflows` | `main` | `.github/workflows/shellcheck.yml` | シェルスクリプトの lint |
-| `github-workflows` | `main` | `.github/workflows/python.yml` | Python の規約(uv での依存管理)・lint・書式・セキュリティ(ruff の `S` ルール)・型・依存関係 |
-| `github-workflows` | `main` | `.github/workflows/typescript.yml` | TypeScript の規約(Bun での依存管理)・lint・書式・型・未使用パッケージ |
+| `devops` | `main` | `.github/workflows/actionlint.yml` | ワークフロー定義の構文 |
+| `devops` | `main` | `.github/workflows/tflint.yml` | Terraform の lint(terraform ruleset の `all` プリセット + aws / google ruleset。設定は全リポジトリ共通で固定) |
+| `devops` | `main` | `.github/workflows/terraform-fmt.yml` | Terraform の書式 |
+| `devops` | `main` | `.github/workflows/terraform.yml` | Terraform の validate・lock ファイルと `required_providers` の整合・test(`*.tftest.hcl`) |
+| `devops` | `main` | `.github/workflows/shellcheck.yml` | シェルスクリプトの lint |
+| `devops` | `main` | `.github/workflows/python.yml` | Python の規約(uv での依存管理)・lint・書式・セキュリティ(ruff の `S` ルール)・型・依存関係 |
+| `devops` | `main` | `.github/workflows/typescript.yml` | TypeScript の規約(Bun での依存管理)・lint・書式・型・未使用パッケージ |
 
 > 必須ワークフローは、対象 repo のコードを実行してよい(`python.yml` / `typescript.yml` の `uv sync` / `bun install` による依存導入と、その環境上で動く mypy(プラグインを含む) / lint-imports / deptry / Biome / knip / tsc、`terraform.yml` の `terraform init` / `validate` / `test` が実行する provider・module など)。ただし次を守る。
 > - `permissions` は read のみとし、secrets を使わない。トリガーは `pull_request` とし、`pull_request_target` では動かさない
@@ -479,17 +479,19 @@ https://github.com/apps/claude を Organization にインストールし、Repos
 1. 最新のリリースタグ(例: `v1.0.0`)のコミット SHA を確認する(`^{}` の行があればそちらを使う)
 
 ```shell
-git ls-remote https://github.com/theindiehacker/github-workflows 'refs/tags/v1.0.0^{}' 'refs/tags/v1.0.0'
+git ls-remote https://github.com/theindiehacker/devops 'refs/tags/v1.0.0^{}' 'refs/tags/v1.0.0'
 ```
 
 2. [`.github/workflows/self-claude.yml`](../.github/workflows/self-claude.yml) を `.github/workflows/claude.yml` としてコピーし、各 job の `uses:` を 1. の値で書き換える
 
 ```diff
 -    uses: ./.github/workflows/claude-code-review.yml
-+    uses: theindiehacker/github-workflows/.github/workflows/claude-code-review.yml@<SHA>  # v1.0.0
++    uses: theindiehacker/devops/.github/workflows/claude-code-review.yml@<SHA>  # v1.0.0
 ```
 
 3. main にマージ後、PR に `/code-review` とコメントしてレビューが投稿されることを確認する
+
+> 💡 本リポジトリは `github-workflows` から `devops` に改名した。旧名の `uses: theindiehacker/github-workflows/...` は GitHub のリダイレクトで当面動くが、リダイレクトに依存しないよう `theindiehacker/devops/...` に書き換える(旧名でリポジトリを作り直すと参照先が乗っ取られるため、旧名は再利用しない)。ruleset はリポジトリ名ではなく ID で紐付くため、改名後の再設定は不要
 
 ---
 ## 5. 🏷️ リリースタグ
@@ -528,7 +530,7 @@ git ls-remote https://github.com/theindiehacker/github-workflows 'refs/tags/v1.0
 | Ruleset Name | `🔒 リリースタグの変更禁止` |
 | Enforcement status | `Active` |
 | Bypass list | 空のまま |
-| Target repositories | `Select repositories` → `github-workflows` のみ |
+| Target repositories | `Select repositories` → `devops` のみ |
 | Target tags | `Include by pattern` → `v*` |
 
 Rules セクションで以下にチェック:

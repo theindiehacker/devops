@@ -61,7 +61,7 @@ jobs:
           grep -RlF -D skip --include='*.tf' --exclude-dir=.git 'tflint-ignore' . > "${RUNNER_TEMP}/tflint-ignore.txt" 2>&1 || rc=$?
           sed 's/\r/\\r/g; s/^/- /' "${RUNNER_TEMP}/tflint-ignore.txt"
           if [ "${rc}" -ne 1 ]; then
-            echo "::error::tflint-ignore コメントがあるか、読み込めない .tf があります（ルールは github-workflows の .github/workflows/tflint.yml で全リポジトリ共通に固定しています）"
+            echo "::error::tflint-ignore コメントがあるか、読み込めない .tf があります（ルールは devops の .github/workflows/tflint.yml で全リポジトリ共通に固定しています）"
             exit 1
           fi
 
