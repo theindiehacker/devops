@@ -415,9 +415,10 @@ tasks:
 
       # git grep ではなく grep -R で作業ツリーを読む（git grep は symlink のリンク先や NUL バイト入りの .tf を読み飛ばすが、
       # tflint はどちらも読み込んで ignore が効くため）。終了コード 2（読めないファイルあり）も失敗にする。
+      # terraform init が取得した外部モジュール（.terraform/）と node_modules/ は tflint の対象外のため除く
       # tflint-ignore の禁止は変更したディレクトリに限らず repo 全体が対象
       rc=0
-      grep -RlF -D skip --include='*.tf' --exclude-dir=.git 'tflint-ignore' . 2>&1 | quote || rc=$?
+      grep -RlF -D skip --include='*.tf' --exclude-dir=.git --exclude-dir=.terraform --exclude-dir=node_modules 'tflint-ignore' . 2>&1 | quote || rc=$?
       if [ "${rc}" -ne 1 ]; then
         echo "❌ tflint-ignore コメントがあるか、読み込めない .tf があります（ルールは devops の .tflint.hcl で全リポジトリ共通に固定しています）"
         exit 1
@@ -641,5 +642,8 @@ tasks:
       {{.LIB}}
       if [ -z "$(git ls-files -- ':(glob)**/*.py' ':(glob)**/*.pyi')" ]; then exit 0; fi
       config=$(config_dir)/pyproject.toml
-      ruff check --no-fix --config "${config}" --select S --ignore S101 .
+      # 共通設定の extend-exclude（__init__.py / migrations 等）で S ルールの検査から外れないよう、
+      # git 管理下のファイルを引数で明示して渡す（明示したファイルは exclude の対象外になる）
+      git ls-files -z -- ':(glob)**/*.py' ':(glob)**/*.pyi' \
+        | xargs -0 ruff check --no-fix --config "${config}" --select S --ignore S101 --
       BASH

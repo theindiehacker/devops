@@ -108,6 +108,7 @@ sequenceDiagram
 ```
 
 - action は `@main` で参照する。自分自身の SHA はそのコミットに書けないため、`Taskfile.yml` の変更をすぐ CI に反映するにはブランチで参照するしかない。ghalint / zizmor はこの action だけを SHA 固定のルールから外している（`.github/ghalint.yml` / `.github/zizmor.yml`）
+- PR のコードを実行するタスク（`style:check:python:types` / `style:check:typescript` / `style:check:terraform`）は、同じ job の後続 step の環境を書き換えられる。他の検査より後に呼ぶか、別の job に分ける
 - `Taskfile.yml` / `pyproject.toml` / `biome.json` / `.tflint.hcl` / `tools/**` / `mise.toml` / `mise.lock` / `.github/actions/**` の変更には security チームの承認が要る（docs/SETUP.md「🛠️ 検知ワークフロー変更の承認必須化」）
 
 ## 🪝 lefthook

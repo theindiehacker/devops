@@ -8,6 +8,10 @@ description: "devops の Taskfile.yml のタスクを、devops の mise.toml / m
 # タスクに渡す値（FILES / LOG_OPTS / BASELINE / IMAGE など。Taskfile.yml 冒頭を参照）は、呼び出し側の step の env で渡す。
 # トークンは対象 repo のコード（uv sync / bun install / terraform init など）に渡さないよう、ここでは設定しない。
 # 必要なタスク（tflint / zizmor）を呼ぶ step でだけ GH_TOKEN を渡す。
+#
+# ⚠️ PR のコードを実行するタスク（style:check:python:types / style:check:typescript / style:check:terraform の
+#    uv sync / bun install / terraform init）は、同じ job の後続 step の環境（$GITHUB_ENV / $GITHUB_PATH、
+#    ダウンロード済みの devops・ツール・キャッシュ）を書き換えられる。他の検査より後に呼ぶか、別の job に分ける。
 inputs:
   task:
     description: "実行するタスク名（例: style:check:tflint）"
