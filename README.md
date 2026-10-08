@@ -30,7 +30,10 @@ remotes:
 ```yaml
 # Taskfile.yml
 includes:
-  common: https://github.com/theindiehacker/devops.git//Taskfile.yml?ref=v1.0.0
+  common:
+    taskfile: https://github.com/theindiehacker/devops.git//Taskfile.yml?ref=v1.0.0
+    # 共通 lefthook.yml が `task security:check` を名前空間なしで呼ぶため、タスクをトップレベルに展開する
+    flatten: true
 ```
 
 ```yaml
