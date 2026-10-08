@@ -283,7 +283,8 @@ tasks:
       mypy_base=$(config_dir)/pyproject.toml
       top=${PWD}
       status=0
-      # 対象 repo のコード（ビルドフック等）が stdin を読んで一覧を消費しないよう、一覧は fd 3 から読む
+      # 対象 repo のコード（ビルドフック等）が stdin を読んで一覧を消費しないよう、一覧は fd 3 から読む。
+      # 内側のループ（lint-imports / deptry）で対象 repo のコードを動かすコマンドは stdin を /dev/null にする
       while IFS= read -r project <&3; do
         echo "▶️ ${project}"
         cd "${top}/${project}"
@@ -331,7 +332,7 @@ tasks:
           dir=$(dirname "${path}")
           if [ "$(cd "${top}" && owner "${dir}")" != "${project}" ]; then continue; fi
           if [ "${project}" = . ]; then rel=${dir}; elif [ "${dir}" = "${project}" ]; then rel=.; else rel=${dir#"${project}/"}; fi
-          if ! uv run --directory "${rel}" --no-sync --with "import-linter==${IMPORT_LINTER_VERSION}" lint-imports --no-cache --no-logo; then
+          if ! uv run --directory "${rel}" --no-sync --with "import-linter==${IMPORT_LINTER_VERSION}" lint-imports --no-cache --no-logo < /dev/null; then
             echo "❌ lint-imports: 「Could not find package」が出る場合は、pyproject.toml に [build-system] を宣言して自パッケージを導入するか、root_package を実在するパッケージに合わせてください"
             status=1
           fi
@@ -346,7 +347,7 @@ tasks:
           while IFS= read -r other; do
             case "${other}" in "${member}"/*) args+=(--extend-exclude "^${other#"${member}/"}/") ;; esac
           done <<< "${workspace}"
-          if ! uv run --directory "${member}" --no-sync --with "deptry==${DEPTRY_VERSION}" deptry . ${args[@]+"${args[@]}"}; then
+          if ! uv run --directory "${member}" --no-sync --with "deptry==${DEPTRY_VERSION}" deptry . ${args[@]+"${args[@]}"} < /dev/null; then
             echo "❌ deptry: 自プロジェクトのパッケージが DEP001 / DEP003 になる場合は [tool.deptry] known_first_party に、検査から外すディレクトリは extend_exclude に追加してください（https://deptry.com/rules-violations/）"
             status=1
           fi
@@ -368,7 +369,8 @@ tasks:
       biome_config=$(config_dir)/biome.json
       top=${PWD}
       status=0
-      # 対象 repo のコード（postinstall 等）が stdin を読んで一覧を消費しないよう、一覧は fd 3 から読む
+      # 対象 repo のコード（postinstall 等）が stdin を読んで一覧を消費しないよう、一覧は fd 3 から読む。
+      # 内側のループ（tsc）で対象 repo のコードを動かすコマンドは stdin を /dev/null にする
       while IFS= read -r root <&3; do
         echo "▶️ ${root}"
         cd "${top}/${root}"
@@ -377,10 +379,11 @@ tasks:
         # 未使用パッケージの検知に絞る（unused files / exports は対象外）
         bun run knip --dependencies || status=1
         # 型チェック単位 = tsconfig.json のあるディレクトリ（workspace ごとの tsconfig.json も個別に検査する）
+        git ls-files -z -- ':(glob)**/tsconfig.json' | dirs > "${tmp}/tsconfigs"
         while IFS= read -r dir; do
           echo "▶️ ${root}/${dir} (tsc)"
-          (cd "${dir}" && bun run tsc --noEmit) || status=1
-        done < <(git ls-files -z -- ':(glob)**/tsconfig.json' | dirs)
+          (cd "${dir}" && bun run tsc --noEmit < /dev/null) || status=1
+        done < "${tmp}/tsconfigs"
       done 3< "${tmp}/roots"
       exit "${status}"
       BASH
