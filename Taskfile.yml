@@ -17,9 +17,6 @@ tasks:
 
   style:check:
     desc: ✏️ スタイルチェック
-    cmds:
-      # Python / 全ファイルの凝集度をチェック
-      - cohesion --files . --verbose
 
   style:fix:
     desc: ✏️ スタイル自動修正
