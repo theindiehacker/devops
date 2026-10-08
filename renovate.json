@@ -2,36 +2,6 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "customManagers": [
     {
-      "description": "ツール導入 step の VERSION と SHA256 を更新する（SHA256 は release アセットの digest から算出される）。VERSION は引用符付きでも取れる。VERSION には GitHub release のタグ名そのもの（v1.2.3 / bun-v1.2.3 など）を書く。github-release-attachments の digest 解決は VERSION の値でタグを検索するため、extractVersion で v を剥がすと 404 になる（renovatebot/renovate#45674）。versioningTemplate は semver のため、タグが vX.Y.Z 形式でないツールは Bun のように packageRules で versioning を上書きすること（semver として解釈できないタグは invalid-value で黙ってスキップされ、エラーも PR も出ない）",
-      "customType": "regex",
-      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.yml$/"],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>[a-zA-Z0-9-._]+?) depName=(?<depName>[^\\s]+?)\\s+(?:(?:[A-Z0-9_]+_)?VERSION|[a-z0-9_]*_version):\\s*\"?(?<currentValue>[^\\s\"]+)\"?\\s+(?:(?:[A-Z0-9_]+_)?SHA256|checksums):\\s*(?<currentDigest>\\S+)"
-      ],
-      "versioningTemplate": "semver"
-    },
-    {
-      "description": "Python ツール導入 step の <TOOL>_VERSION を PyPI の最新版に更新する（datasource=pypi のブロックのみ対象、SHA256 は無い）",
-      "customType": "regex",
-      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.yml$/"],
-      "matchStrings": [
-        "# renovate: datasource=pypi depName=(?<depName>[^\\s]+?)\\s+[A-Z_]+_VERSION:\\s*\"?(?<currentValue>[^\\s\"]+)\"?"
-      ],
-      "datasourceTemplate": "pypi",
-      "versioningTemplate": "pep440"
-    },
-    {
-      "description": "tflint.yml に埋め込んだ tflint 設定の plugin version を GitHub Releases の最新版に更新する（タグは v 付き、設定には v を除いて書く）",
-      "customType": "regex",
-      "managerFilePatterns": ["/^\\.github/workflows/tflint\\.yml$/"],
-      "matchStrings": [
-        "version\\s*=\\s*\"(?<currentValue>[^\"]+)\"\\s+source\\s*=\\s*\"github\\.com/(?<depName>[^\"]+)\""
-      ],
-      "datasourceTemplate": "github-releases",
-      "extractVersionTemplate": "^v(?<version>.+)$",
-      "versioningTemplate": "semver"
-    },
-    {
       "description": "Taskfile.yml の vars にある <TOOL>_VERSION（uv run --with / uvx で使う Python ツール）を PyPI の最新版に更新する（datasource=pypi のブロックのみ対象、SHA256 は無い）。mise で導入するツールは mise.toml を Renovate 標準の mise manager が更新する",
       "customType": "regex",
       "managerFilePatterns": ["/^Taskfile\\.yml$/"],
@@ -51,13 +21,6 @@
       "datasourceTemplate": "github-releases",
       "extractVersionTemplate": "^v(?<version>.+)$",
       "versioningTemplate": "semver"
-    }
-  ],
-  "packageRules": [
-    {
-      "description": "Bun のリリースタグは bun-v プレフィックス付きで semver として解釈できないため、regex versioning でバージョンを読み取る（canary 等の非リリースタグは除外される）",
-      "matchPackageNames": ["oven-sh/bun"],
-      "versioning": "regex:^bun-v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
     }
   ],
   "pip-compile": {

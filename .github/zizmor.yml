@@ -1,0 +1,9 @@
+# zizmor の設定（変更には security チームの承認が必要: docs/SETUP.md 2.5）
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # 必須ワークフローは devops 自身の composite action（Taskfile.yml を実行する）を @main で参照する。
+        # 自分自身の SHA はそのコミットに書けないため、Taskfile.yml の変更を即座に CI へ反映するには branch で参照するしかない
+        "theindiehacker/devops/*": ref-pin
+        "*": hash-pin

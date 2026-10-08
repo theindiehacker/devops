@@ -1,47 +1,25 @@
 name: "🐍 python"
 
-# Python のコードと依存管理を検査する。
-# ⚠️ 必須ワークフローは on: のフィルタが無視され全 PR で起動するため、対象の判定は detect ジョブで行う
+# Python のコードと依存管理を検査する。検査の中身は devops の Taskfile.yml の style:check:python:* / security:check:ruff。
+# ⚠️ 必須ワークフローは on: のフィルタが無視され全 PR で起動するため、対象の判定は job 内で行う
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
-permissions: {}
+permissions:
+  contents: read
+  pull-requests: read  # paths-filter の変更ファイル一覧取得に必要
 
 # 同一 PR に連投された run のみ束ねて追い越しキャンセル
 concurrency:
   group: python-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
-env:
-  # ツール版は対象 repo の宣言を読まず中央で固定する（2 桁の版が float に化けないよう引用符で囲む）
-  # renovate: datasource=pypi depName=uv
-  UV_VERSION: "0.12.23"
-  # renovate: datasource=pypi depName=ruff
-  RUFF_VERSION: "0.16.10"
-  # renovate: datasource=pypi depName=mypy
-  MYPY_VERSION: "2.4.0"
-  # renovate: datasource=pypi depName=import-linter
-  IMPORT_LINTER_VERSION: "2.15"
-  # renovate: datasource=pypi depName=deptry
-  DEPTRY_VERSION: "0.25.1"
-
 jobs:
-  detect:
-    name: "検査対象を検出"
+  check:
+    name: "Python を検査"
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read  # paths-filter の変更ファイル一覧取得に必要
-    outputs:
-      python: ${{ steps.filter.outputs.python }}
-      # uv.lock のあるディレクトリの JSON 配列（例: [".", "backend"]）
-      projects: ${{ steps.assign.outputs.projects || '[]' }}
-      # 検査対象を担当プロジェクト（project）とそこからの相対パス（rel）に割り当てた JSON 配列。
-      # project が空なら、どの uv.lock の配下にも無く検査できない
-      pyprojects: ${{ steps.assign.outputs.pyprojects || '[]' }}
-      importlinters: ${{ steps.assign.outputs.importlinters || '[]' }}
+    timeout-minutes: 20
     steps:
       - name: "検査の要否を判定"
         id: filter
@@ -75,266 +53,27 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: "検査対象を割り当てる"
-        id: assign
+      # 以降の step は !cancelled() で暗黙の success() を外し、前段が fail しても全ての結果を 1 run で出す
+      - name: "📜 uv で依存を管理しているか"
         if: steps.filter.outputs.python == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          # 「どのディレクトリがどの uv.lock に属するか」の判定はこの step に一本化する
-          # （各ジョブで同じ探索を書くと、片方だけ直したときに規約の判定と検査範囲が食い違う）
-
-          # プロセス置換では git の失敗が伝わらないため、pipefail の効くパイプラインで受ける（該当なしは [] になる）。
-          # -z のまま渡す（改行や非 ASCII を含むパスが壊れるため）
-          json=$(git ls-files -z -- ':(glob)**/uv.lock' | jq -Rsc 'split("\u0000")[:-1] | map(sub("/?uv\\.lock$"; "") | if . == "" then "." else . end)')
-          echo "projects=${json}" >> "${GITHUB_OUTPUT}"
-
-          # 最も近い祖先の uv.lock のディレクトリ。どこにも無ければ空
-          owner() {
-            local dir=$1
-            while [ ! -e "${dir}/uv.lock" ] && [ "${dir}" != . ]; do dir=$(dirname "${dir}"); done
-            if [ -e "${dir}/uv.lock" ]; then printf '%s' "${dir}"; fi
-          }
-          assign() {
-            local path dir project rel
-            while IFS= read -r -d '' path; do
-              dir=$(dirname "${path}")
-              project=$(owner "${dir}")
-              if [ "${dir}" = "${project}" ]; then rel=.; else rel=${dir#"${project}/"}; fi
-              jq -nc --arg path "${path}" --arg project "${project}" --arg rel "${rel}" '$ARGS.named'
-            done < "$1" | jq -sc .
-          }
-
-          # git grep は該当なしで 1 を返すため、それ以外の失敗だけを止める
-          files=$(mktemp)
-          git grep -lzE '^\[(project|tool\.poetry|tool\.uv\.workspace)\]' -- ':(glob)**/pyproject.toml' > "${files}" || [ "$?" -eq 1 ]
-          json=$(assign "${files}")
-          echo "pyprojects=${json}" >> "${GITHUB_OUTPUT}"
-
-          git grep -lzE '^\[(tool\.)?importlinter\]' -- ':(glob)**/pyproject.toml' ':(glob)**/setup.cfg' ':(glob)**/.importlinter' > "${files}" || [ "$?" -eq 1 ]
-          json=$(assign "${files}")
-          echo "importlinters=${json}" >> "${GITHUB_OUTPUT}"
-
-  rule:
-    name: "📜 規約を検査"
-    needs: detect
-    if: needs.detect.outputs.python == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - name: "Checkout"
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        uses: theindiehacker/devops/.github/actions/task@main
         with:
-          persist-credentials: false
+          task: style:check:python:rule
 
-      # git 上のファイルだけを見て判定する（対象 repo のコードは動かさない）
-      - name: "uv で依存を管理しているか"
-        shell: bash
-        env:
-          PYPROJECTS: ${{ needs.detect.outputs.pyprojects }}
-          IMPORTLINTERS: ${{ needs.detect.outputs.importlinters }}
-        run: |
-          set -euo pipefail
-          # 対象 repo 由来のパスをそのまま埋めるとワークフローコマンドを偽装できるためエスケープする
-          escape() { local value=${1//%/%25}; value=${value//$'\r'/%0D}; printf '%s' "${value//$'\n'/%0A}"; }
-          escape_property() { local value; value=$(escape "$1"); value=${value//:/%3A}; printf '%s' "${value//,/%2C}"; }
-          status=0
-          # requirements 系は依存管理として使われているものだけを対象にする
-          # （pyproject.toml がある repo ではその隣にあるもの、無い repo は Python コードがあるときだけ）
-          manifests=$(git ls-files -- ':(glob)**/pyproject.toml')
-          sources=$(git ls-files -- ':(glob)**/*.py' ':(glob)**/*.pyi')
-          # プロセス置換では git の失敗が伝わらないため、いったんファイルに受ける。
-          # 対象を増やすときは detect の paths フィルタにも追加する（フィルタから漏れると起動しない）
-          files=$(mktemp)
-          git ls-files -z -- ':(glob)**/*requirements*.txt' ':(glob)**/requirements/*.txt' ':(glob)**/setup.py' ':(glob)**/setup.cfg' ':(glob)**/Pipfile' ':(glob)**/Pipfile.lock' ':(glob)**/poetry.lock' ':(glob)**/pdm.lock' > "${files}"
-          while IFS= read -r -d '' file; do
-            dir=$(dirname "${file}")
-            case "${file}" in
-              *requirements/*.txt|*requirements*.txt)
-                # requirements/ に分けている場合は、その親を宣言の置き場所とみなす
-                case "${file}" in *requirements/*.txt) dir=$(dirname "${dir}") ;; esac
-                if [ -n "${manifests}" ]; then
-                  if [ ! -e "${dir}/pyproject.toml" ]; then continue; fi
-                elif [ -z "${sources}" ]; then
-                  continue
-                fi
-                # uv export で書き出したものは配布用の成果物として許可する
-                IFS= read -r first < "${file}" || true
-                case "${first}" in *'autogenerated by uv'*) continue ;; esac ;;
-              # 依存を宣言しない setup.py / setup.cfg は、ビルド定義（C 拡張等）や他ツールの設定として許可する
-              setup.py|setup.cfg|*/setup.py|*/setup.cfg)
-                if ! grep -qE '(install|setup)_requires' "${file}"; then continue; fi ;;
-            esac
-            echo "::error file=$(escape_property "${file}")::$(escape "${file}") ではなく pyproject.toml と uv.lock で依存を管理してください（https://docs.astral.sh/uv/guides/migration/pip-to-project/）"
-            status=1
-          done < "${files}"
-          # 自分の uv.lock を持つか、祖先の lock に記録されている（= workspace の member である）ことを確認する。
-          # lock が最新かは依存関係の導入時に uv が判定する
-          jq -j '.[] | .path, "\u0000", .project, "\u0000", .rel, "\u0000"' <<< "${PYPROJECTS}" > "${files}"
-          while IFS= read -r -d '' path && IFS= read -r -d '' project && IFS= read -r -d '' rel; do
-            if [ -z "${project}" ]; then
-              echo "::error file=$(escape_property "${path}")::uv.lock がありません。uv lock を実行して uv.lock をコミットしてください（https://docs.astral.sh/uv/concepts/projects/layout/#the-lockfile）"
-              status=1
-            elif [ "${rel}" != . ] && ! grep -qsF -e "editable = \"${rel}\"" -e "virtual = \"${rel}\"" -e "directory = \"${rel}\"" "${project}/uv.lock"; then
-              echo "::error file=$(escape_property "${path}")::uv.lock に含まれていません。uv lock を実行して uv.lock をコミットするか、workspace の members に追加してください（https://docs.astral.sh/uv/concepts/projects/workspaces/）"
-              status=1
-            fi
-          done < "${files}"
-          # どの uv.lock にも属さない import-linter の設定は、検査に使う環境を作れないため誰も検査できない
-          jq -j '.[] | select(.project == "") | .path, "\u0000"' <<< "${IMPORTLINTERS}" > "${files}"
-          while IFS= read -r -d '' path; do
-            echo "::error file=$(escape_property "${path}")::import-linter の設定がどの uv.lock の配下にもないため検査できません。pyproject.toml と uv.lock で依存を管理してください（https://docs.astral.sh/uv/guides/migration/pip-to-project/）"
-            status=1
-          done < "${files}"
-          exit "${status}"
-
-  ruff:
-    name: "✏️ ruff"
-    needs: detect
-    if: needs.detect.outputs.python == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - name: "Checkout"
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: "✏️ ruff"
+        if: ${{ !cancelled() && steps.filter.outputs.python == 'true' }}
+        uses: theindiehacker/devops/.github/actions/task@main
         with:
-          persist-credentials: false
+          task: style:check:python:ruff
 
-      - name: "✏️ ruff check"
-        uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89  # v4.1.0
-        with:
-          version: ${{ env.RUFF_VERSION }}
-          args: "check --no-fix --output-format=github"
-          # 既定は ${{ github.workspace }}（絶対パス）で、annotation が PR の差分に貼られない
-          src: "."
-
-      # 前の step の action が ruff を PATH に入れる
-      - name: "✏️ ruff format"
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: ruff format --check --diff
-
-      # bandit 相当の S ルールを、対象 repo の select / ignore に関わらず必ず検査する（--select が設定を上書きする）。
-      # 誤検知は # noqa: Sxxx か per-file-ignores で個別に外す。S101（assert）はテストで多用され誤検知が大半のため除く
       - name: "🛡️ ruff security"
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: ruff check --no-fix --output-format=github --select S --ignore S101
-
-  pyproject:
-    name: "🚧 型・依存関係を検査 (${{ matrix.project }})"
-    needs: detect
-    if: needs.detect.outputs.projects != '[]'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        project: ${{ fromJSON(needs.detect.outputs.projects) }}
-    defaults:
-      run:
-        shell: bash
-        working-directory: ${{ matrix.project }}
-    steps:
-      - name: "Checkout"
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        if: ${{ !cancelled() && steps.filter.outputs.python == 'true' }}
+        uses: theindiehacker/devops/.github/actions/task@main
         with:
-          persist-credentials: false
+          task: security:check:ruff
 
-      - name: "Install uv"
-        id: uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+      - name: "🚧 型・依存関係"
+        if: ${{ !cancelled() && steps.filter.outputs.python == 'true' }}
+        uses: theindiehacker/devops/.github/actions/task@main
         with:
-          version: ${{ env.UV_VERSION }}
-          working-directory: ${{ matrix.project }}
-          enable-cache: true
-          # 既定の glob は pyproject.toml 等も含み、依存と無関係な変更でキャッシュが無効になる。
-          # pyproject.toml との一致は uv lock --check で強制しているため lock だけで足りる
-          cache-dependency-glob: uv.lock
-          cache-suffix: python-${{ env.UV_VERSION }}
-
-      - name: "uv.lock が pyproject.toml と一致しているか"
-        run: uv lock --check
-
-      # 以降の step は !cancelled() で暗黙の success() を外し、前段が fail しても 3 ツールの結果を 1 run で出す
-
-      - name: "🧰 依存関係を導入"
-        id: deps
-        if: ${{ !cancelled() && steps.uv.outcome == 'success' }}
-        run: |
-          set -euo pipefail
-          # workspace の全メンバー・extras・dependency-groups まで入れる（不足すると mypy / deptry が誤検知する）
-          if uv sync --frozen --all-packages --all-extras --all-groups; then exit 0; fi
-          echo "::warning::extras を含めた uv sync に失敗したため extras を除いて検査します（extras 限定の依存は deptry が誤検知することがあります）"
-          # 導入できなければ検査を skip せず fail させる（緑のまま「何も検査していない」状態を作らないため）
-          uv sync --frozen --all-packages --all-groups || { echo "::error::uv sync に失敗しました。ランナーで依存を導入できない repo の扱いは docs/SETUP.md「✏️ スタイルチェック」の例外運用を参照してください"; exit 1; }
-
-      # 検査対象は対象 repo の [tool.mypy] files / packages / modules に委ねる（位置引数を渡すと設定側の宣言が無視される）
-      - name: "🧱 mypy - 型チェック"
-        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
-        run: |
-          set -euo pipefail
-          log=$(mktemp)
-          if uv run --no-sync --with "mypy==${MYPY_VERSION}" mypy 2>&1 | tee "${log}"; then exit 0; fi
-          # 対象の宣言が無いと mypy は usage エラー（exit 2）で終わるため、対処方法を出す
-          if grep -qF 'Missing target module' "${log}"; then
-            echo "::error::mypy: 検査対象が宣言されていません。pyproject.toml の [tool.mypy] に files / packages / modules を宣言してください（https://mypy.readthedocs.io/en/stable/config_file.html#confval-files）"
-          fi
-          exit 1
-
-      - name: "➡️ lint-imports - モジュール依存関係を検査"
-        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
-        env:
-          IMPORTLINTERS: ${{ needs.detect.outputs.importlinters }}
-          PROJECT: ${{ matrix.project }}
-        run: |
-          set -euo pipefail
-          # detect が自分に割り当てた設定だけを検査する（設定はプロジェクト直下とは限らない）
-          configs=$(mktemp)
-          jq -j --arg project "${PROJECT}" '.[] | select(.project == $project) | .rel, "\u0000"' <<< "${IMPORTLINTERS}" > "${configs}"
-          if [ ! -s "${configs}" ]; then
-            echo "::notice::このプロジェクトに割り当てられた import-linter の設定が無いため skip"
-            exit 0
-          fi
-          status=0
-          while IFS= read -r -d '' dir; do
-            echo "::group::${dir//$'\n'/%0A}"
-            uv run --directory "${dir}" --no-sync --with "import-linter==${IMPORT_LINTER_VERSION}" lint-imports --no-cache --no-logo || status=1
-            echo "::endgroup::"
-          done < "${configs}"
-          if [ "${status}" -ne 0 ]; then
-            echo "::error::lint-imports: 「Could not find package」が出る場合は、pyproject.toml に [build-system] を宣言して自パッケージを導入するか、root_package を実在するパッケージに合わせてください（https://import-linter.readthedocs.io/en/stable/usage.html）"
-          fi
-          exit "${status}"
-
-      - name: "🗑️ deptry - 不要なパッケージを検知"
-        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
-        run: |
-          set -euo pipefail
-          # uv workspace は、依存を宣言する単位であるメンバーごとに検査する（[project] を持たない virtual root は列挙されない）
-          workspace=$(uv workspace list --paths)
-          if [ -z "${workspace}" ]; then
-            echo "::notice::workspace にメンバーが無いため skip"
-            exit 0
-          fi
-          status=0
-          while IFS= read -r member; do
-            # workspace ルートの deptry . は配下メンバーのソースまで走査するため、他のメンバーを除外する
-            args=()
-            while IFS= read -r other; do
-              case "${other}" in "${member}"/*) args+=(--extend-exclude "^${other#"${member}/"}/") ;; esac
-            done <<< "${workspace}"
-            echo "::group::${member}"
-            uv run --directory "${member}" --no-sync --with "deptry==${DEPTRY_VERSION}" deptry . "${args[@]}" || status=1
-            echo "::endgroup::"
-          done <<< "${workspace}"
-          if [ "${status}" -ne 0 ]; then
-            echo "::error::deptry: 自プロジェクトのパッケージ（src/ や app/ 配下など）が DEP001 / DEP003 になる場合は pyproject.toml の [tool.deptry] known_first_party に（https://deptry.com/usage/#known-first-party）、別の uv.lock を持つ入れ子のプロジェクトなど検査から外すディレクトリは extend_exclude に（https://deptry.com/usage/#extend-exclude）追加してください。その他の違反の対処は https://deptry.com/rules-violations/ を参照してください"
-          fi
-          exit "${status}"
+          task: style:check:python:types

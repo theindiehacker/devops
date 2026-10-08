@@ -1,6 +1,6 @@
 name: "🧹 actionlint"
 
-# GitHub Actions のワークフロー定義を actionlint で構文チェックする。
+# GitHub Actions のワークフロー定義を actionlint で構文チェックする。検査の中身は devops の Taskfile.yml の style:check:actionlint。
 #
 # ⚠️ 必須ワークフローは on: のフィルタ（paths / branches / types 等）が無視され全 PR で起動されるため、
 #    「ワークフローファイルが変更されたか」の判定は本ワークフロー内で行う。
@@ -44,29 +44,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: "Install actionlint"
-        if: steps.filter.outputs.workflows == 'true'
-        shell: bash
-        env:
-          # renovate: datasource=github-release-attachments depName=rhysd/actionlint
-          VERSION: v1.7.12
-          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
-        run: |
-          set -euo pipefail
-          ARCHIVE="actionlint_${VERSION#v}_linux_amd64.tar.gz"
-          curl -sSfL -o "$ARCHIVE" "https://github.com/rhysd/actionlint/releases/download/${VERSION}/${ARCHIVE}"
-
-          # SHA-256 検証（改ざん・破損を検知）
-          echo "${SHA256}  ${ARCHIVE}" | sha256sum -c -
-
-          sudo tar -xz -C /usr/local/bin -f "$ARCHIVE" actionlint
-          rm -f "$ARCHIVE"
-          actionlint --version
-
       - name: "actionlint"
         if: steps.filter.outputs.workflows == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          # workflow command 形式で出力し、検出箇所を PR に annotation 表示する
-          actionlint -format $'{{range $err := .}}::error file={{$err.Filepath}},line={{$err.Line}},col={{$err.Column}}::{{$err.Message}}\n{{end}}'
+        uses: theindiehacker/devops/.github/actions/task@main
+        with:
+          task: style:check:actionlint

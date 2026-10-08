@@ -7,8 +7,7 @@ name: "🏗️ tflint"
 #    対象ファイルの変更がない PR では lint を skip し、run 全体は success になる
 #    （ルールセットが All repositories 適用のため、Terraform 未使用の repo でも合格できる必要がある）。
 #
-# 設定は全リポジトリ共通で本ワークフローに埋め込み TFLINT_CONFIG_FILE で固定する（対象 repo の .tflint.hcl は読まない）。
-# インラインの tflint-ignore コメントによる抑制も禁止する。
+# 検査の中身（全リポジトリ共通の設定・tflint-ignore コメントの禁止）は devops の Taskfile.yml の style:check:tflint。
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -47,99 +46,12 @@ jobs:
         with:
           persist-credentials: false
 
-      # git grep ではなく grep -R で作業ツリーを読む（git grep は symlink のリンク先を読まず、-I を付けると
-      # NUL バイト入りの .tf も読み飛ばすが、tflint はどちらも読み込んで ignore が効くため）。
-      # 終了コード 2（読めないファイルあり）はマッチがあっても返るため、1（マッチなし）以外はすべて失敗にする。
-      # grep はパスをエスケープせず改行（CR を含む）入りのパスで行が分かれるため、CR を可視化し stderr も含め
-      # 全行に "- " を付けてワークフローコマンドとして解釈されないようにする
-      - name: "インライン ignore コメントの禁止"
-        if: steps.filter.outputs.terraform == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          rc=0
-          grep -RlF -D skip --include='*.tf' --exclude-dir=.git 'tflint-ignore' . > "${RUNNER_TEMP}/tflint-ignore.txt" 2>&1 || rc=$?
-          sed 's/\r/\\r/g; s/^/- /' "${RUNNER_TEMP}/tflint-ignore.txt"
-          if [ "${rc}" -ne 1 ]; then
-            echo "::error::tflint-ignore コメントがあるか、読み込めない .tf があります（ルールは devops の .github/workflows/tflint.yml で全リポジトリ共通に固定しています）"
-            exit 1
-          fi
-
-      # checksums は release の zip の SHA-256。action がダウンロード後に検証する
-      - name: "Setup tflint"
-        if: steps.filter.outputs.terraform == 'true'
-        uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337  # v6.3.2
-        with:
-          # renovate: datasource=github-release-attachments depName=terraform-linters/tflint
-          tflint_version: v0.64.0
-          checksums: cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
-
-      # 以降の tflint はすべてこの設定と plugin を使う（対象 repo の .tflint.hcl や、
-      # cwd の ./.tflint.d/plugins が優先されて設定・plugin を差し替えられないよう固定する）
-      - name: "tflint の設定と plugin の配置先を固定"
-        if: steps.filter.outputs.terraform == 'true'
-        shell: bash
-        env:
-          TFLINT_HCL: |
-            config {
-              call_module_type = "local"
-            }
-
-            plugin "terraform" {
-              enabled = true
-              preset  = "all"
-            }
-
-            plugin "google" {
-              enabled = true
-              version = "0.40.0"
-              source  = "github.com/terraform-linters/tflint-ruleset-google"
-            }
-
-            plugin "aws" {
-              enabled = true
-              version = "0.49.0"
-              source  = "github.com/terraform-linters/tflint-ruleset-aws"
-            }
-        run: |
-          set -euo pipefail
-          printf '%s' "${TFLINT_HCL}" > "${RUNNER_TEMP}/.tflint.hcl"
-          echo "TFLINT_CONFIG_FILE=${RUNNER_TEMP}/.tflint.hcl" >> "${GITHUB_ENV}"
-          echo "TFLINT_PLUGIN_DIR=${RUNNER_TEMP}/tflint-plugins" >> "${GITHUB_ENV}"
-
-      - name: "tflint plugin の導入"
-        if: steps.filter.outputs.terraform == 'true'
-        shell: bash
-        env:
-          # tflint --init が GitHub Releases から plugin を取得する際の rate limit 対策
-          GITHUB_TOKEN: ${{ github.token }}
-        run: tflint --init
-
-      # lint はディレクトリ（モジュール）単位のため、変更ファイルをディレクトリに集約する。
-      # .terraform はキャッシュ・vendored モジュール置き場のため lint 対象外
-      - name: "lint 対象ディレクトリを列挙"
-        if: steps.filter.outputs.terraform == 'true'
-        shell: bash
-        env:
-          TARGETS: ${{ steps.filter.outputs.terraform_files }}
-        run: |
-          set -euo pipefail
-          jq -r '.[] | select(test("(^|/)\\.terraform/") | not) | if contains("/") then sub("/[^/]*$"; "") else "." end' \
-            <<< "${TARGETS}" | sort -u > "${RUNNER_TEMP}/tflint-dirs.txt"
-
-      # 対象 repo 由来のパスで ::group:: の行を分けられないようエスケープする。
-      # 結果は annotation にせず log に出す（既定の形式で、ファイル・行・ルール名と該当箇所が出る）。
-      # 出力には対象 repo のパスやソースが含まれるため、全行に "| " を付けてワークフローコマンドを防ぐ（runner は行頭の空白を除いて判定するため字下げでは防げない）
       - name: "tflint"
         if: steps.filter.outputs.terraform == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          escape() { local value=${1//%/%25}; value=${value//$'\r'/%0D}; printf '%s' "${value//$'\n'/%0A}"; }
-          status=0
-          while IFS= read -r dir; do
-            echo "::group::$(escape "${dir}")"
-            tflint --chdir="${dir}" 2>&1 | sed 's/\r/\\r/g; s/^/| /' || status=1
-            echo "::endgroup::"
-          done < "${RUNNER_TEMP}/tflint-dirs.txt"
-          exit "${status}"
+        uses: theindiehacker/devops/.github/actions/task@main
+        env:
+          FILES: ${{ steps.filter.outputs.terraform_files }}
+          # tflint --init が GitHub Releases から plugin を取得する際の rate limit 対策（init の後は unset する）
+          GH_TOKEN: ${{ github.token }}
+        with:
+          task: style:check:tflint

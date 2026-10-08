@@ -1,5 +1,6 @@
 name: "🛡️ Gitleaks"
 
+# PR で追加したコミットのシークレットを gitleaks で検知する。検査の中身は devops の Taskfile.yml の security:check:gitleaks。
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -24,38 +25,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: "Install Gitleaks"
-        shell: bash
-        env:
-          # renovate: datasource=github-release-attachments depName=gitleaks/gitleaks
-          VERSION: v8.30.1
-          SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
-        run: |
-          set -euo pipefail
-          ARCHIVE="gitleaks_${VERSION#v}_linux_x64.tar.gz"
-          curl -sSfL -o "$ARCHIVE" "https://github.com/gitleaks/gitleaks/releases/download/${VERSION}/${ARCHIVE}"
-
-          # SHA-256 検証（改ざん・破損を検知）
-          echo "${SHA256}  ${ARCHIVE}" | sha256sum -c -
-
-          sudo tar -xz -C /usr/local/bin -f "$ARCHIVE" gitleaks
-          rm -f "$ARCHIVE"
-          gitleaks version
-
       - name: "Gitleaks スキャン"
-        shell: bash
+        uses: theindiehacker/devops/.github/actions/task@main
         env:
           # PR の base..head 差分のみスキャン
           LOG_OPTS: ${{ format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) }}
-        run: |
-          set -euo pipefail
-          # --ignore-gitleaks-allow: インライン allow コメントを無効化（抑制は承認必須の .gitleaksignore に限定する）
-          rc=0
-          gitleaks git . --redact --verbose --exit-code 1 --ignore-gitleaks-allow --log-opts="${LOG_OPTS}" \
-            --report-format json --report-path gitleaks-report.json || rc=$?
-
-          # 検出箇所を PR に annotation 表示する（シークレット本体・マッチ文字列は含めない）
-          if [ -s gitleaks-report.json ]; then
-            jq -r '.[] | "::error file=\(.File),line=\(.StartLine)::gitleaks (\(.RuleID)): \(.Description) — commit \(.Commit[0:8]) にシークレットの可能性"' gitleaks-report.json
-          fi
-          exit "${rc}"
+        with:
+          task: security:check:gitleaks

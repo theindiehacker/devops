@@ -3,7 +3,8 @@ name: "🛡️ Semgrep"
 # アプリケーションコードを Semgrep CE（SAST, ルールセット p/default・severity ERROR のみ）で全 PR スキャンする。
 # --baseline-commit により「PR で新規に増えた検出」のみを対象とするため、
 # 既存コードの検出が無関係な PR をブロックすることはない。
-# 誤検知は承認必須の .semgrepignore で抑制する（インライン nosemgrep は下記 --disable-nosem で無効化）。
+# 誤検知は承認必須の .semgrepignore で抑制する（インライン nosemgrep は無効化している）。
+# 検査の中身は devops の Taskfile.yml の security:check:semgrep。
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -21,9 +22,6 @@ jobs:
     name: "アプリケーションコードをスキャン"
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    container:
-      # semgrep/semgrep:1.169.0 を digest 固定（改ざん防止）
-      image: semgrep/semgrep@sha256:51c9f53a4fce0d55e9abd08d7b96968654248a4b1122e77f20e0a49c0072446c
     steps:
       - name: "Checkout"
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -32,38 +30,8 @@ jobs:
           persist-credentials: false
 
       - name: "Semgrep スキャン"
-        shell: bash
+        uses: theindiehacker/devops/.github/actions/task@main
         env:
           BASELINE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          # --disable-nosem: インライン nosemgrep コメントを無効化（抑制は承認必須の .semgrepignore に限定する）
-          # --json-output: stdout のテキスト出力は保ったまま、annotation 生成用の JSON を併出力する
-          rc=0
-          semgrep scan \
-            --config p/default \
-            --severity ERROR \
-            --error \
-            --metrics off \
-            --disable-version-check \
-            --disable-nosem \
-            --baseline-commit "${BASELINE}" \
-            --json-output=semgrep-report.json \
-            . || rc=$?
-
-          # 検出箇所を PR に annotation 表示する
-          if [ -s semgrep-report.json ]; then
-            python3 - <<'PY'
-          import json
-
-          def esc(s):
-              return s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-
-          with open("semgrep-report.json") as f:
-              report = json.load(f)
-          for r in report.get("results", []):
-              msg = r.get("extra", {}).get("message", "")
-              print(f"::error file={r['path']},line={r['start']['line']}::semgrep ({r['check_id']}): {esc(msg)}")
-          PY
-          fi
-          exit "${rc}"
+        with:
+          task: security:check:semgrep

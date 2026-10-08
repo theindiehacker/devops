@@ -7,18 +7,8 @@ name: "🔷 typescript"
 #    対象ファイルの変更がない PR では検査を skip し、run 全体は success になる
 #    （ルールセットが All repositories 適用のため、TypeScript 未使用の repo でも合格できる必要がある）。
 #
-# Required workflow は対象 repo から inputs を受け取れないため、検査対象は規約ベースで検出する:
-#   - 導入単位 = 祖先に package.json を持たない最上位の package.json のディレクトリ。monorepo（workspaces）
-#     ではルート 1 箇所、frontend/ と tools/ のように独立プロジェクトが並ぶ構成では各々が単位になる
-#   - 型チェック単位 = tsconfig.json のあるディレクトリ（workspace ごとの tsconfig.json も個別に検査する）
-#   - node_modules / .git は探索対象外
-#   - 導入単位が 0 件なら bun の導入ごと skip し、run 全体は success になる
-#
-# 対象 repo に求める前提: bun.lock をコミットし、biome / knip / typescript を devDependencies に持つこと。
-# bun 本体は対象 repo の指定ではなく中央で固定し、SHA-256 検証つきで導入する。
-#
-# bun install が失敗した場合のみ後続を skip する。biome / knip / tsc は互いに独立して実行するため、
-# 1 回の run で全ての違反が出揃う。
+# 検査の中身（導入単位・型チェック単位の検出、biome の共通設定）は devops の Taskfile.yml の style:check:typescript。
+# 対象 repo に求める前提: bun.lock をコミットし、knip / typescript を devDependencies に持つこと。
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -70,85 +60,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: "検査対象を収集"
-        id: collect
+      - name: "TypeScript を検査"
         if: steps.filter.outputs.typescript == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # 導入単位。package.json を見つけた時点で -prune し、その配下は単位として数えない
-          find . \( -path ./.git -o -name node_modules \) -prune -o \
-            -type d -exec test -e '{}/package.json' ';' -print -prune \
-            | sed 's|^\./||' | sort > "${RUNNER_TEMP}/roots.txt"
-          # 型チェック単位（-printf '%h' は tsconfig.json のあるディレクトリ）
-          find . \( -path ./.git -o -name node_modules \) -prune -o \
-            -name tsconfig.json -printf '%h\n' \
-            | sed 's|^\./||' | sort > "${RUNNER_TEMP}/tsconfigs.txt"
-          cat "${RUNNER_TEMP}/roots.txt" "${RUNNER_TEMP}/tsconfigs.txt"
-
-          if [ -s "${RUNNER_TEMP}/roots.txt" ]; then
-            echo "roots=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "roots=false" >> "${GITHUB_OUTPUT}"
-          fi
-
-          # 収集した各ディレクトリで引数のコマンドを実行する共通ヘルパ。
-          # 1 つ失敗しても残りは続行し、最後に 1 を返す
-          cat > "${RUNNER_TEMP}/each" <<'SH'
-          #!/usr/bin/env bash
-          set -uo pipefail
-          list="$1"; shift
-          status=0
-          while IFS= read -r dir; do
-            if [ -z "${dir}" ]; then continue; fi
-            echo "::group::${dir}"
-            (cd "${dir}" && "$@") || status=1
-            echo "::endgroup::"
-          done < "${list}"
-          exit "${status}"
-          SH
-          chmod +x "${RUNNER_TEMP}/each"
-
-      - name: "Install bun"
-        if: steps.collect.outputs.roots == 'true'
-        shell: bash
-        env:
-          # renovate: datasource=github-release-attachments depName=oven-sh/bun
-          VERSION: bun-v1.4.2
-          SHA256: 36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913
-        run: |
-          set -euo pipefail
-          ARCHIVE="bun-linux-x64.zip"
-          curl -sSfL -o "$ARCHIVE" "https://github.com/oven-sh/bun/releases/download/${VERSION}/${ARCHIVE}"
-
-          # SHA-256 検証（改ざん・破損を検知）
-          echo "${SHA256}  ${ARCHIVE}" | sha256sum -c -
-
-          sudo unzip -o -j "$ARCHIVE" "bun-linux-x64/bun" -d /usr/local/bin
-          sudo chmod +x /usr/local/bin/bun
-          rm -f "$ARCHIVE"
-          bun --version
-
-      - name: "bun install"
-        id: install
-        if: steps.collect.outputs.roots == 'true'
-        shell: bash
-        run: '"${RUNNER_TEMP}/each" "${RUNNER_TEMP}/roots.txt" bun install --frozen-lockfile'
-
-      - name: "biome ci"
-        # 検出箇所を PR に annotation 表示する（--reporter=github）
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        shell: bash
-        run: '"${RUNNER_TEMP}/each" "${RUNNER_TEMP}/roots.txt" bun run biome ci --reporter=github .'
-
-      - name: "knip"
-        # 未使用パッケージの検知に絞る（unused files / exports は対象外）
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        shell: bash
-        run: '"${RUNNER_TEMP}/each" "${RUNNER_TEMP}/roots.txt" bun run knip --dependencies'
-
-      - name: "tsc"
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        shell: bash
-        run: '"${RUNNER_TEMP}/each" "${RUNNER_TEMP}/tsconfigs.txt" bun run tsc --noEmit'
+        uses: theindiehacker/devops/.github/actions/task@main
+        with:
+          task: style:check:typescript
