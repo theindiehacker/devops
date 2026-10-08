@@ -1,4 +1,4 @@
-# 🛠️ Dev Ops
+# 🛠️ DevOps ( 👉 FastShip CLI )
 Organization 共通の CI / ruleset / Lefthook / Taskfile を管理するリポジトリ
 
 ```mermaid
