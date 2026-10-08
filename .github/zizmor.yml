@@ -1,0 +1,10 @@
+# zizmor の設定（変更には security チームの承認が必要: docs/SETUP.md 2.5）
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # 必須ワークフローは devops の Taskfile と同じ main で動かすため、devops 自身の composite action だけ ref 固定を許す
+        # （必須ワークフロー自体も main を参照しており、信頼境界は変わらない: docs/TASKFILE-CI.md）
+        "theindiehacker/devops/.github/actions/task": ref-pin
+        # それ以外は既定どおりすべて SHA 固定を必須にする
+        "*": hash-pin

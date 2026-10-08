@@ -1,6 +1,7 @@
 name: "🛡️ ghalint"
 
 # permissions 未設定・アクションの SHA 未固定など、構文ではなくセキュリティ観点のポリシー違反を検出する。
+# チェックの中身（フラグ・ツールの版）は .github/Taskfile.yml の ghalint タスクが正で、ここはそれを呼ぶだけ。
 #
 # ⚠️ 必須ワークフローは on: のフィルタ（paths / branches / types 等）が無視され全 PR で起動されるため、
 #    「ワークフロー / 設定ファイルが変更されたか」の判定は本ワークフロー内で行う。
@@ -49,45 +50,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: "Install ghalint"
-        if: steps.filter.outputs.workflows == 'true'
-        shell: bash
-        env:
-          # renovate: datasource=github-release-attachments depName=suzuki-shunsuke/ghalint
-          VERSION: v1.5.6
-          SHA256: 98ee0e3330de7286f470d1e89c03ff7ce70d7a5998ba0f15969c400447be579c
-        run: |
-          set -euo pipefail
-          ARCHIVE="ghalint_${VERSION#v}_linux_amd64.tar.gz"
-          curl -sSfL -o "$ARCHIVE" "https://github.com/suzuki-shunsuke/ghalint/releases/download/${VERSION}/${ARCHIVE}"
-
-          # SHA-256 検証（改ざん・破損を検知）
-          echo "${SHA256}  ${ARCHIVE}" | sha256sum -c -
-
-          sudo tar -xz -C /usr/local/bin -f "$ARCHIVE" ghalint
-          rm -f "$ARCHIVE"
-          ghalint version
-
       - name: "ghalint"
         if: steps.filter.outputs.workflows == 'true'
-        shell: bash
-        env:
-          GHALINT_LOG_COLOR: never  # annotation 生成のログ解析を色コードで壊さない
-        run: |
-          set -euo pipefail
-          rc=0
-          ghalint run 2>ghalint.log || rc=$?
-          cat ghalint.log
-
-          # ghalint は行番号を出力しないため、違反はワークフローファイル単位で PR に annotation 表示する
-          if [ "${rc}" -ne 0 ] && [ -s ghalint.log ]; then
-            grep ' ERR ' ghalint.log | while IFS= read -r line; do
-              file=$(sed -n 's/.* workflow_file_path=\([^ ]*\).*/\1/p' <<< "${line}")
-              policy=$(sed -n 's/.* policy_name=\([^ ]*\).*/\1/p' <<< "${line}")
-              error=$(sed -n 's/.* error="\([^"]*\)".*/\1/p' <<< "${line}")
-              if [ -n "${file}" ]; then
-                echo "::error file=${file}::ghalint (${policy}): ${error}"
-              fi
-            done
-          fi
-          exit "${rc}"
+        uses: theindiehacker/devops/.github/actions/task@main  # Taskfile と同じ main で動かす（除外設定は .github/ghalint.yml / zizmor.yml）
+        with:
+          task: ghalint
+          tools: task ghalint
