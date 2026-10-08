@@ -23,7 +23,8 @@ tasks:
 
   security:gitleaks:
     desc: 🛡️ セキュリティチェック / 🔑 シークレット情報の検知
-    cmd: gitleaks git --pre-commit --redact --staged --verbose --ignore-gitleaks-allow
+    # lefthook から呼ばれたときは、コミット中のインデックス（SCAN_INDEX_FILE）を検査する
+    cmd: GIT_INDEX_FILE="${SCAN_INDEX_FILE:-$(git rev-parse --git-path index)}" gitleaks git --pre-commit --redact --staged --verbose --ignore-gitleaks-allow
 
   security:check:
     desc: 🛡️ セキュリティチェック
