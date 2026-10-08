@@ -34,6 +34,9 @@ includes:
     taskfile: https://github.com/theindiehacker/devops.git//Taskfile.yml?ref=v1.0.0
     # 共通 lefthook.yml が `task security:check` を名前空間なしで呼ぶため、タスクをトップレベルに展開する
     flatten: true
+    vars:
+      # 共通設定（pyproject.toml / biome.json / .tflint.hcl）を取得する版。上の ref と同じタグにする
+      DEVOPS_REF: v1.0.0
 ```
 
 ```yaml
@@ -45,3 +48,8 @@ include = ["git::https://github.com/theindiehacker/devops.git//mise.toml?ref=v1.
 ### 🎊 セットアップ
 
 [docs/SETUP.md](./docs/SETUP.md) を参照して、実行してください。
+
+### ✅ チェック
+
+セキュリティチェック・リント・フォーマッターは `Taskfile.yml` に一元化しており、ローカルでも必須ワークフローでも同じタスクを実行します。
+`task style:check` / `task style:fix` / `task security:check` で実行できます。詳細は [docs/CHECKS.md](./docs/CHECKS.md) を参照してください。

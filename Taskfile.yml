@@ -1,6 +1,95 @@
 version: '3'
 
+# セキュリティチェック・リント・フォーマッターの source of truth。
+# ローカル（各 repo から remote include）でも CI（必須ワークフロー → .github/actions/task）でも同じタスクを実行する。
+# 挙動は docs/CHECKS.md を参照。
+#
+# CI から渡す環境変数（ローカルでは未設定で、リポジトリ全体を検査する）:
+#   FILES     paths-filter が出力した変更ファイルの JSON 配列。指定されたファイル（のディレクトリ）だけを検査する
+#   LOG_OPTS  gitleaks がスキャンするコミット範囲（例: base..head）
+#   BASELINE  semgrep の --baseline-commit（PR で新たに増えた検出だけを対象にする）
+#   IMAGE     trivy でスキャンするビルド済みイメージ
+
 silent: true
+# deps は並列に実行されるため、タスクごとに出力をまとめる
+output: group
+
+vars:
+  # `uv run --with` で使うツールの版（2 桁の版が float に化けないよう引用符で囲む）。
+  # mise で導入するツールの版は mise.toml で管理する
+  # renovate: datasource=pypi depName=mypy
+  MYPY_VERSION: "2.4.0"
+  # renovate: datasource=pypi depName=import-linter
+  IMPORT_LINTER_VERSION: "2.15"
+  # renovate: datasource=pypi depName=deptry
+  DEPTRY_VERSION: "0.25.1"
+
+  # 各タスクの bash の先頭に埋め込む共通処理
+  LIB: |
+    set -euo pipefail
+    # 起動したディレクトリではなく repo のルートで検査する（FILES のパスも repo ルートからの相対）
+    cd "$(git rev-parse --show-toplevel)"
+    tmp=$(mktemp -d)
+    trap 'rm -rf "${tmp}"' EXIT
+
+    # 検査対象のファイルを NUL 区切りで出す。CI では FILES（paths-filter で絞り込み済み）、ローカルでは引数の pathspec に合う git 管理下の全ファイル
+    targets() {
+      if [ -n "${FILES:-}" ]; then jq -j '.[] | ., "\u0000"' <<< "${FILES}"; else git ls-files -z -- "$@"; fi
+    }
+    # NUL 区切りのパスを、そのディレクトリの一覧（改行区切り・重複なし）にする。.terraform はキャッシュ置き場のため除く
+    dirs() {
+      local f
+      while IFS= read -r -d '' f; do
+        case "${f}" in *$'\n'* | *$'\r'*) echo "❌ 改行を含むパスは検査できません" >&2; return 1 ;; esac
+        if [[ "${f}" == */* ]]; then printf '%s\n' "${f%/*}"; else echo .; fi
+      done | { grep -Ev '(^|/)\.terraform(/|$)' || true; } | sort -u
+    }
+    # 最も近い祖先の uv.lock のディレクトリ。どこにも無ければ空
+    owner() {
+      local dir=$1
+      while [ ! -e "${dir}/uv.lock" ] && [ "${dir}" != . ]; do dir=$(dirname "${dir}"); done
+      if [ -e "${dir}/uv.lock" ]; then printf '%s' "${dir}"; fi
+    }
+    # TypeScript の導入単位（祖先に package.json を持たない package.json のディレクトリ）を改行区切りで出す
+    ts_roots() {
+      local dir root top roots=() list
+      list=$(mktemp) || return 1
+      git ls-files -z -- ':(glob)**/package.json' > "${list}" || return 1
+      dirs < "${list}" > "${list}.dirs" || return 1
+      while IFS= read -r dir; do
+        top=1
+        for root in ${roots[@]+"${roots[@]}"}; do
+          if [ "${root}" = . ] || [[ "${dir}" == "${root}"/* ]]; then top=0; break; fi
+        done
+        if [ "${top}" = 1 ]; then roots+=("${dir}"); printf '%s\n' "${dir}"; fi
+      done < "${list}.dirs"
+      rm -f "${list}" "${list}.dirs"
+    }
+    # 対象 repo 由来の出力（ソースや差分）が CI でワークフローコマンドとして解釈されないよう、行頭に "| " を付ける
+    quote() {
+      if [ -n "${GITHUB_ACTIONS:-}" ]; then sed 's/\r/\\r/g; s/^/| /'; else cat; fi
+    }
+    # 共通設定（pyproject.toml / biome.json / .tflint.hcl）を置いた devops のディレクトリを出す。
+    # devops の Taskfile.yml を直接実行したとき（devops 自身・CI の .github/actions/task）はその場所を使う。
+    # 各 repo から remote include したときは Taskfile.yml しか取得されないため、include の vars で渡した
+    # DEVOPS_REF（リリースタグ）の devops を clone して使う。タグは不変なので、一度 clone したものを使い回す
+    config_dir() {
+      if [ -z "${DEVOPS_REF}" ]; then printf '%s' "${DEVOPS_DIR}"; return; fi
+      local dir="${XDG_CACHE_HOME:-${HOME}/.cache}/devops/${DEVOPS_REF}"
+      if [ ! -d "${dir}" ]; then
+        # deps は並列に実行されるため、別の場所に clone してから置く
+        # $(config_dir) の中では set -e が効かないため、失敗は明示的に返す
+        local work
+        work=$(mktemp -d) || return 1
+        git clone --quiet --depth 1 --branch "${DEVOPS_REF}" https://github.com/theindiehacker/devops.git "${work}/devops" >&2 || return 1
+        mkdir -p "$(dirname "${dir}")" || return 1
+        if [ ! -d "${dir}" ]; then mv "${work}/devops" "${dir}" || return 1; fi
+        rm -rf "${work}"
+      fi
+      printf '%s' "${dir}"
+    }
+    DEVOPS_DIR='{{.TASKFILE_DIR}}'
+    DEVOPS_REF='{{.DEVOPS_REF}}'
 
 tasks:
   default:
@@ -15,17 +104,542 @@ tasks:
       - PATH="$HOME/.local/bin:$PATH" mise install --yes  # mise をセットアップ
       - echo "done!✨"
 
+  # ============ ✏️ スタイル ============
+
   style:check:
     desc: ✏️ スタイルチェック
-    cmds:
-      # Python / 全ファイルの凝集度をチェック
-      - cohesion --files . --verbose
+    deps:
+      - style:check:line
+      - style:check:python:rule
+      - style:check:python:ruff
+      - style:check:python:types
+      - style:check:typescript
+      - style:check:terraform:fmt
+      - style:check:terraform
+      - style:check:tflint
+      - style:check:shellcheck
+      - style:check:actionlint
 
   style:fix:
     desc: ✏️ スタイル自動修正
+    dir: '{{.USER_WORKING_DIR}}'
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      # 自動修正できない違反が残ると失敗する。残りの修正も行うため、最後にまとめて失敗させる
+      status=0
+      if [ -n "$(git ls-files -- ':(glob)**/*.py' ':(glob)**/*.pyi')" ]; then
+        config=$(config_dir)/pyproject.toml
+        ruff check --fix --config "${config}" . || status=1
+        ruff format --config "${config}" . || status=1
+      fi
+      biome_config=$(config_dir)/biome.json
+      ts_roots > "${tmp}/roots"
+      while IFS= read -r root; do
+        (cd "${root}" && git ls-files -z | xargs -0 biome check --write --config-path="${biome_config}" --no-errors-on-unmatched --) || status=1
+      done < "${tmp}/roots"
+      if [ -n "$(git ls-files -- ':(glob)**/*.tf' ':(glob)**/*.tfvars' ':(glob)**/*.tftest.hcl')" ]; then
+        terraform fmt -recursive || status=1
+      fi
+      exit "${status}"
+      BASH
+
+  style:check:line:
+    desc: ✏️ 1 ファイルの行数チェック（500 行超は設計に問題がある兆候）
+    dir: '{{.USER_WORKING_DIR}}'
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      git ls-files -z -- ':(glob)**/*.ts' ':(glob)**/*.py' \
+        | xargs -0 awk 'FNR > 500 { print FILENAME ": 500 行を超えています"; bad = 1; nextfile } END { exit bad }'
+      BASH
+
+  style:check:python:rule:
+    desc: 🐍 uv で依存を管理しているか（git 上のファイルだけを見て判定し、対象 repo のコードは動かさない）
+    dir: '{{.USER_WORKING_DIR}}'
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      status=0
+      # requirements 系は依存管理として使われているものだけを対象にする
+      # （pyproject.toml がある repo ではその隣にあるもの、無い repo は Python コードがあるときだけ）
+      manifests=$(git ls-files -- ':(glob)**/pyproject.toml')
+      sources=$(git ls-files -- ':(glob)**/*.py' ':(glob)**/*.pyi')
+      git ls-files -z -- ':(glob)**/*requirements*.txt' ':(glob)**/requirements/*.txt' ':(glob)**/setup.py' ':(glob)**/setup.cfg' \
+        ':(glob)**/Pipfile' ':(glob)**/Pipfile.lock' ':(glob)**/poetry.lock' ':(glob)**/pdm.lock' > "${tmp}/legacy"
+      while IFS= read -r -d '' file; do
+        dir=$(dirname "${file}")
+        case "${file}" in
+          *requirements/*.txt | *requirements*.txt)
+            # requirements/ に分けている場合は、その親を宣言の置き場所とみなす
+            case "${file}" in *requirements/*.txt) dir=$(dirname "${dir}") ;; esac
+            if [ -n "${manifests}" ]; then
+              if [ ! -e "${dir}/pyproject.toml" ]; then continue; fi
+            elif [ -z "${sources}" ]; then
+              continue
+            fi
+            # uv export で書き出したものは配布用の成果物として許可する
+            IFS= read -r first < "${file}" || true
+            case "${first}" in *'autogenerated by uv'*) continue ;; esac ;;
+          # 依存を宣言しない setup.py / setup.cfg は、ビルド定義（C 拡張等）や他ツールの設定として許可する
+          setup.py | setup.cfg | */setup.py | */setup.cfg)
+            if ! grep -qE '(install|setup)_requires' "${file}"; then continue; fi ;;
+        esac
+        echo "❌ ${file}: pyproject.toml と uv.lock で依存を管理してください（https://docs.astral.sh/uv/guides/migration/pip-to-project/）"
+        status=1
+      done < "${tmp}/legacy"
+
+      # 自分の uv.lock を持つか、祖先の lock に記録されている（= workspace の member である）ことを確認する
+      git grep -lzE '^\[(project|tool\.poetry|tool\.uv\.workspace)\]' -- ':(glob)**/pyproject.toml' > "${tmp}/pyprojects" || [ "$?" -eq 1 ]
+      while IFS= read -r -d '' path; do
+        dir=$(dirname "${path}")
+        project=$(owner "${dir}")
+        if [ -z "${project}" ]; then
+          echo "❌ ${path}: uv.lock がありません。uv lock を実行して uv.lock をコミットしてください（https://docs.astral.sh/uv/concepts/projects/layout/#the-lockfile）"
+          status=1
+        elif [ "${dir}" != "${project}" ]; then
+          rel=${dir#"${project}/"}
+          if ! grep -qsF -e "editable = \"${rel}\"" -e "virtual = \"${rel}\"" -e "directory = \"${rel}\"" "${project}/uv.lock"; then
+            echo "❌ ${path}: uv.lock に含まれていません。uv lock を実行するか、workspace の members に追加してください（https://docs.astral.sh/uv/concepts/projects/workspaces/）"
+            status=1
+          fi
+        fi
+      done < "${tmp}/pyprojects"
+
+      # どの uv.lock にも属さない import-linter の設定は、検査に使う環境を作れない
+      git grep -lzE '^\[(tool\.)?importlinter\]' -- ':(glob)**/pyproject.toml' ':(glob)**/setup.cfg' ':(glob)**/.importlinter' > "${tmp}/importlinters" || [ "$?" -eq 1 ]
+      while IFS= read -r -d '' path; do
+        if [ -z "$(owner "$(dirname "${path}")")" ]; then
+          echo "❌ ${path}: import-linter の設定がどの uv.lock の配下にもないため検査できません"
+          status=1
+        fi
+      done < "${tmp}/importlinters"
+      exit "${status}"
+      BASH
+
+  style:check:python:ruff:
+    desc: 🐍 ruff で lint・書式を検査
+    dir: '{{.USER_WORKING_DIR}}'
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      if [ -z "$(git ls-files -- ':(glob)**/*.py' ':(glob)**/*.pyi')" ]; then exit 0; fi
+      config=$(config_dir)/pyproject.toml
+      status=0
+      ruff check --no-fix --config "${config}" . || status=1
+      ruff format --check --diff --config "${config}" . || status=1
+      exit "${status}"
+      BASH
+
+  style:check:python:types:
+    desc: 🐍 uv.lock ごとに lock の整合・mypy・lint-imports・deptry を検査（対象 repo の依存を導入して実行する）
+    dir: '{{.USER_WORKING_DIR}}'
+    env:
+      MYPY_VERSION: '{{.MYPY_VERSION}}'
+      IMPORT_LINTER_VERSION: '{{.IMPORT_LINTER_VERSION}}'
+      DEPTRY_VERSION: '{{.DEPTRY_VERSION}}'
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      git ls-files -z -- ':(glob)**/uv.lock' | dirs > "${tmp}/projects"
+      if [ ! -s "${tmp}/projects" ]; then exit 0; fi
+      git grep -lzE '^\[(tool\.)?importlinter\]' -- ':(glob)**/pyproject.toml' ':(glob)**/setup.cfg' ':(glob)**/.importlinter' > "${tmp}/importlinters" || [ "$?" -eq 1 ]
+      mypy_base=$(config_dir)/pyproject.toml
+      top=${PWD}
+      status=0
+      # 対象 repo のコード（ビルドフック等）が stdin を読んで一覧を消費しないよう、一覧は fd 3 から読む
+      while IFS= read -r project <&3; do
+        echo "▶️ ${project}"
+        cd "${top}/${project}"
+
+        # uv.lock が pyproject.toml と一致しているか
+        uv lock --check || status=1
+
+        # workspace の全メンバー・extras・dependency-groups まで入れる（不足すると mypy / deptry が誤検知する）
+        if ! uv sync --frozen --all-packages --all-extras --all-groups; then
+          echo "⚠️ extras を含めた uv sync に失敗したため extras を除いて検査します（extras 限定の依存は deptry が誤検知することがあります）"
+          if ! uv sync --frozen --all-packages --all-groups; then
+            echo "❌ uv sync に失敗しました。ランナーで依存を導入できない repo の扱いは devops の docs/SETUP.md「✏️ スタイルチェック」の例外運用を参照してください"
+            status=1
+            continue
+          fi
+        fi
+
+        # mypy: 検査対象はこのプロジェクトの Python ファイル（配下にある別の uv.lock のプロジェクトは除く）
+        excludes=()
+        while IFS= read -r other; do
+          if [ "${other}" = "${project}" ]; then continue; fi
+          if [ "${project}" = . ]; then excludes+=(":(exclude)${other}")
+          elif [[ "${other}" == "${project}"/* ]]; then excludes+=(":(exclude)${other#"${project}/"}")
+          fi
+        done < "${tmp}/projects"
+        files=()
+        while IFS= read -r -d '' file; do files+=("${file}"); done \
+          < <(git ls-files -z -- ':(glob)**/*.py' ':(glob)**/*.pyi' ${excludes[@]+"${excludes[@]}"})
+        if [ "${#files[@]}" -gt 0 ]; then
+          # プロジェクトに合わせて mypy_path と plugins を足す（[tool.mypy] は pyproject.toml の最後のテーブル）
+          config="${tmp}/pyproject.toml"
+          cp "${mypy_base}" "${config}"
+          if uv run --no-sync python -c 'import pydantic' 2>/dev/null; then echo 'plugins = ["pydantic.mypy"]' >> "${config}"; fi
+          mypypath=
+          if [ -d src ]; then mypypath=src; fi
+          MYPYPATH=${mypypath} uv run --no-sync --with "mypy==${MYPY_VERSION}" mypy --config-file "${config}" "${files[@]}" || status=1
+        fi
+
+        # lint-imports: このプロジェクトに属する import-linter の設定ごとに検査する（設定はプロジェクト直下とは限らない）
+        while IFS= read -r -d '' path; do
+          dir=$(dirname "${path}")
+          if [ "$(cd "${top}" && owner "${dir}")" != "${project}" ]; then continue; fi
+          if [ "${project}" = . ]; then rel=${dir}; elif [ "${dir}" = "${project}" ]; then rel=.; else rel=${dir#"${project}/"}; fi
+          if ! uv run --directory "${rel}" --no-sync --with "import-linter==${IMPORT_LINTER_VERSION}" lint-imports --no-cache --no-logo; then
+            echo "❌ lint-imports: 「Could not find package」が出る場合は、pyproject.toml に [build-system] を宣言して自パッケージを導入するか、root_package を実在するパッケージに合わせてください"
+            status=1
+          fi
+        done < "${tmp}/importlinters"
+
+        # deptry: 依存を宣言する単位である workspace のメンバーごとに検査する
+        workspace=$(uv workspace list --paths)
+        while IFS= read -r member; do
+          if [ -z "${member}" ]; then continue; fi
+          # workspace ルートの deptry . は配下メンバーのソースまで走査するため、他のメンバーを除外する
+          args=()
+          while IFS= read -r other; do
+            case "${other}" in "${member}"/*) args+=(--extend-exclude "^${other#"${member}/"}/") ;; esac
+          done <<< "${workspace}"
+          if ! uv run --directory "${member}" --no-sync --with "deptry==${DEPTRY_VERSION}" deptry . ${args[@]+"${args[@]}"}; then
+            echo "❌ deptry: 自プロジェクトのパッケージが DEP001 / DEP003 になる場合は [tool.deptry] known_first_party に、検査から外すディレクトリは extend_exclude に追加してください（https://deptry.com/rules-violations/）"
+            status=1
+          fi
+        done <<< "${workspace}"
+      done 3< "${tmp}/projects"
+      exit "${status}"
+      BASH
+
+  style:check:typescript:
+    desc: 🔷 TypeScript を biome・knip・tsc で検査（対象 repo の依存を bun で導入して実行する）
+    dir: '{{.USER_WORKING_DIR}}'
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      ts_roots > "${tmp}/roots"
+      if [ ! -s "${tmp}/roots" ]; then exit 0; fi
+      biome_config=$(config_dir)/biome.json
+      top=${PWD}
+      status=0
+      # 対象 repo のコード（postinstall 等）が stdin を読んで一覧を消費しないよう、一覧は fd 3 から読む
+      while IFS= read -r root <&3; do
+        echo "▶️ ${root}"
+        cd "${top}/${root}"
+        git ls-files -z | xargs -0 biome ci --config-path="${biome_config}" --no-errors-on-unmatched -- || status=1
+        if ! bun install --frozen-lockfile; then status=1; continue; fi
+        # 未使用パッケージの検知に絞る（unused files / exports は対象外）
+        bun run knip --dependencies || status=1
+        # 型チェック単位 = tsconfig.json のあるディレクトリ（workspace ごとの tsconfig.json も個別に検査する）
+        while IFS= read -r dir; do
+          echo "▶️ ${root}/${dir} (tsc)"
+          (cd "${dir}" && bun run tsc --noEmit) || status=1
+        done < <(git ls-files -z -- ':(glob)**/tsconfig.json' | dirs)
+      done 3< "${tmp}/roots"
+      exit "${status}"
+      BASH
+
+  style:check:terraform:fmt:
+    desc: 🏗️ Terraform の書式を検査
+    dir: '{{.USER_WORKING_DIR}}'
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      # fmt は -recursive を付けなければ指定ディレクトリ直下だけを見る。CI では変更したディレクトリだけを検査する
+      targets ':(glob)**/*.tf' ':(glob)**/*.tfvars' ':(glob)**/*.tftest.hcl' | dirs > "${tmp}/dirs"
+      status=0
+      while IFS= read -r dir; do
+        terraform fmt -check -no-color -diff -- "${dir}" | quote || status=1
+      done < "${tmp}/dirs"
+      exit "${status}"
+      BASH
+
+  style:check:terraform:
+    desc: 🏗️ Terraform の validate・test（init が要るため provider・module を実行する）
+    dir: '{{.USER_WORKING_DIR}}'
+    env:
+      TF_IN_AUTOMATION: "1"
+      TF_INPUT: "0"
+      CHECKPOINT_DISABLE: "1"
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      # 変更があったディレクトリではなく repo 全体を検査する（examples/ はモジュールを相対パスで呼ぶため）
+      git ls-files -z -- ':(glob)**/*.tf' ':(glob)**/*.tf.json' | dirs > "${tmp}/dirs"
+      if [ ! -s "${tmp}/dirs" ]; then exit 0; fi
+      if [ -n "${TF_PLUGIN_CACHE_DIR:-}" ]; then mkdir -p "${TF_PLUGIN_CACHE_DIR}"; fi
+      status=0
+      : > "${tmp}/initialized"
+      while IFS= read -r dir; do
+        echo "▶️ ${dir}"
+        # lock ファイルがあれば読み取り専用で使い、required_providers と合わなければ失敗させる
+        args=(-backend=false)
+        if [ -f "${dir}/.terraform.lock.hcl" ]; then args+=(-lockfile=readonly); fi
+        # init に失敗したディレクトリは validate しない（二次的なエラーしか出ない）。
+        # lock ファイルに無いハッシュを readonly のため追記できなかったときは、init は成功するが provider を検証できないため失敗とする。
+        # terraform が stdin を読んでディレクトリ一覧を消費しないよう、< /dev/null で切り離す
+        if terraform -chdir="${dir}" init "${args[@]}" < /dev/null 2>&1 | tee "${tmp}/init.log" \
+          && ! grep -q 'Provider lock file not updated' "${tmp}/init.log"; then
+          printf '%s\n' "${dir}" >> "${tmp}/initialized"
+          terraform -chdir="${dir}" validate < /dev/null || status=1
+        else
+          status=1
+        fi
+      done < "${tmp}/dirs"
+
+      # validate が失敗しても、init できたディレクトリのテストは実行する。
+      # テストはモジュール直下か tests/ に置かれる（terraform の既定）。
+      # クラウドの認証情報は渡さないため、command = plan と mock_provider で完結するテストだけが通る
+      shopt -s nullglob
+      while IFS= read -r dir; do
+        tests=("${dir}"/{,tests/}*.tftest.{hcl,json})
+        if [ "${#tests[@]}" -eq 0 ]; then continue; fi
+        echo "▶️ ${dir} (test)"
+        terraform -chdir="${dir}" test < /dev/null || status=1
+      done < "${tmp}/initialized"
+      exit "${status}"
+      BASH
+
+  style:check:tflint:
+    desc: 🏗️ Terraform を tflint で lint（設定は全リポジトリ共通。tflint-ignore コメントは禁止）
+    dir: '{{.USER_WORKING_DIR}}'
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      targets ':(glob)**/*.tf' ':(glob)**/*.tf.json' ':(glob)**/*.tfvars' ':(glob)**/*.tfvars.json' | dirs > "${tmp}/dirs"
+      if [ ! -s "${tmp}/dirs" ]; then exit 0; fi
+
+      # git grep ではなく grep -R で作業ツリーを読む（git grep は symlink のリンク先や NUL バイト入りの .tf を読み飛ばすが、
+      # tflint はどちらも読み込んで ignore が効くため）。終了コード 2（読めないファイルあり）も失敗にする。
+      # tflint-ignore の禁止は変更したディレクトリに限らず repo 全体が対象
+      rc=0
+      grep -RlF -D skip --include='*.tf' --exclude-dir=.git 'tflint-ignore' . 2>&1 | quote || rc=$?
+      if [ "${rc}" -ne 1 ]; then
+        echo "❌ tflint-ignore コメントがあるか、読み込めない .tf があります（ルールは devops の .tflint.hcl で全リポジトリ共通に固定しています）"
+        exit 1
+      fi
+
+      # 対象 repo の .tflint.hcl や cwd の ./.tflint.d/plugins で設定・plugin を差し替えられないよう、どちらも固定する
+      TFLINT_CONFIG_FILE=$(config_dir)/.tflint.hcl
+      export TFLINT_CONFIG_FILE
+      export TFLINT_PLUGIN_DIR="${XDG_CACHE_HOME:-${HOME}/.cache}/devops/tflint-plugins"
+      # plugin の取得にだけトークンを使い、対象 repo の定義を読む lint には渡さない
+      GITHUB_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" tflint --init
+      unset GH_TOKEN GITHUB_TOKEN
+
+      status=0
+      while IFS= read -r dir; do
+        echo "▶️ ${dir}"
+        tflint --chdir="${dir}" 2>&1 | quote || status=1
+      done < "${tmp}/dirs"
+      exit "${status}"
+      BASH
+
+  style:check:shellcheck:
+    desc: 🐚 シェルスクリプトを shellcheck で lint
+    dir: '{{.USER_WORKING_DIR}}'
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      targets ':(glob)**/*.sh' ':(glob)**/*.bash' ':(glob)**/*.ksh' > "${tmp}/targets"
+      if [ ! -s "${tmp}/targets" ]; then exit 0; fi
+      xargs -0 shellcheck --severity=warning --external-sources -- < "${tmp}/targets"
+      BASH
+
+  style:check:actionlint:
+    desc: 🧹 GitHub Actions のワークフロー定義を actionlint で構文チェック
+    dir: '{{.USER_WORKING_DIR}}'
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      if [ -z "$(git ls-files -- '.github/workflows/*.yml' '.github/workflows/*.yaml')" ]; then exit 0; fi
+      actionlint
+      BASH
+
+  # ============ 🛡️ セキュリティ ============
 
   security:check:
     desc: 🛡️ セキュリティチェック
-    cmds:
-      # 🔑 gitleaks: シークレット情報が GitHub リポジトリに push されないようにする
-      - gitleaks git --pre-commit --redact --staged --verbose --ignore-gitleaks-allow
+    deps:
+      - security:check:gitleaks
+      - security:check:semgrep
+      - security:check:trivy
+      - security:check:zizmor
+      - security:check:ghalint
+      - security:check:ruff
+
+  security:check:gitleaks:
+    desc: 🔑 gitleaks でシークレットを検知（ローカルは全履歴、CI は LOG_OPTS の範囲）
+    dir: '{{.USER_WORKING_DIR}}'
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      # --ignore-gitleaks-allow: インライン allow コメントを無効化（抑制は承認必須の .gitleaksignore に限定する）
+      gitleaks git . --redact --verbose --exit-code 1 --ignore-gitleaks-allow ${LOG_OPTS:+"--log-opts=${LOG_OPTS}"}
+      BASH
+
+  security:check:gitleaks:staged:
+    desc: 🔑 gitleaks で staged の変更からシークレットを検知（pre-commit 用）
+    dir: '{{.USER_WORKING_DIR}}'
+    cmd: gitleaks git --pre-commit --redact --staged --verbose --ignore-gitleaks-allow
+
+  security:check:semgrep:
+    desc: 🛡️ Semgrep CE（p/default・severity ERROR）でアプリケーションコードをスキャン
+    dir: '{{.USER_WORKING_DIR}}'
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      # Semgrep は依存も含めてハッシュ固定した tools/semgrep/requirements.txt から専用の venv に入れる（--require-hashes で改ざんを検知する）。
+      # venv は requirements.txt の内容ごとに作り、一度作ったものを使い回す
+      requirements=$(config_dir)/tools/semgrep/requirements.txt
+      digest=$(shasum -a 256 < "${requirements}" | cut -c1-16)
+      venv="${XDG_CACHE_HOME:-${HOME}/.cache}/devops/semgrep-${digest}"
+      if [ ! -x "${venv}/bin/semgrep" ]; then
+        uv venv --quiet --python 3.12 "${venv}"
+        uv pip install --quiet --python "${venv}/bin/python" --require-hashes -r "${requirements}"
+      fi
+      # --disable-nosem: インライン nosemgrep コメントを無効化（抑制は承認必須の .semgrepignore に限定する）
+      "${venv}/bin/semgrep" scan \
+        --config p/default \
+        --severity ERROR \
+        --error \
+        --metrics off \
+        --disable-version-check \
+        --disable-nosem \
+        ${BASELINE:+--baseline-commit "${BASELINE}"} \
+        .
+      BASH
+
+  security:check:trivy:
+    desc: 🛡️ Trivy で依存パッケージの脆弱性と IaC の設定ミスをスキャン（IMAGE を渡すとビルド済みイメージをスキャン）
+    dir: '{{.USER_WORKING_DIR}}'
+    env:
+      # レジストリのレート制限で落ちないよう、公式配布先 3 箇所をフォールバック指定する
+      TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
+      TRIVY_JAVA_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1,public.ecr.aws/aquasecurity/trivy-java-db:1
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      # Trivy にはインライン ignore を無効化するオプションが無いため、コメント自体を禁止する。
+      # tfsec 互換の接頭辞も Trivy は ignore として扱うので両方を対象にする（トークンの分割はこのファイル自身の検知を防ぐため）
+      TOKEN='(trivy|tfsec):''ignore'
+      if git grep -InE "${TOKEN}" -- .; then
+        echo "❌ インライン ignore コメント（trivy / tfsec の ignore トークン）は使用できません。.trivyignore / .trivyignore.yaml で抑制してください"
+        exit 1
+      fi
+
+      # severity: 組織の下限 HIGH,CRITICAL に repo の trivy.yaml の指定を足す（CLI 引数が優先されるため repo 側から弱められない）
+      levels=(CRITICAL HIGH)
+      for cfg in trivy.yaml trivy.yml; do
+        if [ ! -f "${cfg}" ]; then continue; fi
+        raw=$(yq --output-format=json '.severity // []' "${cfg}" \
+          | jq -r '[.] | flatten | map(tostring) | join(",") | ascii_upcase | gsub(" "; "")')
+        IFS=, read -ra extra <<< "${raw}"
+        for level in ${extra[@]+"${extra[@]}"}; do
+          case "${level}" in
+            "") ;;
+            UNKNOWN | LOW | MEDIUM | HIGH | CRITICAL) levels+=("${level}") ;;
+            *) echo "❌ ${cfg}: severity に不正な値があります: ${level}"; exit 1 ;;
+          esac
+        done
+        break
+      done
+      severity=$(printf '%s\n' "${levels[@]}" | sort -u | paste -sd, -)
+
+      # 抑制ファイル: Trivy が既定で読むのは .trivyignore だけなので、YAML 版は明示的に渡す
+      args=()
+      if [ -f .trivyignore.yaml ]; then
+        if [ -f .trivyignore ]; then
+          echo "❌ .trivyignore と .trivyignore.yaml は併用できません。どちらか一方にまとめてください"
+          exit 1
+        fi
+        args+=(--ignorefile .trivyignore.yaml)
+      fi
+
+      # 検知ポリシー（HIGH 以上 / 修正版がある脆弱性のみ / 検知したら失敗）はここで固定する
+      args+=(--scanners vuln,misconfig --severity "${severity}" --ignore-unfixed --exit-code 1)
+      if [ -n "${IMAGE:-}" ]; then
+        trivy image "${args[@]}" "${IMAGE}"
+      else
+        trivy fs "${args[@]}" .
+      fi
+      BASH
+
+  security:check:zizmor:
+    desc: 🛡️ GitHub Actions の設定を zizmor で静的解析（severity HIGH 以上）
+    dir: '{{.USER_WORKING_DIR}}'
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      # zizmor がスキャンする種類（workflow / action / dependabot / pre-commit。後者 2 つはファイル名だけで判定され任意のディレクトリから収集される）
+      pathspecs=(
+        ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' ':(glob)**/action.yml' ':(glob)**/action.yaml'
+        ':(glob)**/dependabot.yml' ':(glob)**/dependabot.yaml'
+        ':(glob)**/.pre-commit-config.yaml' ':(glob)**/.pre-commit-config.yml' ':(glob)**/.pre-commit-hooks.yaml' ':(glob)**/.pre-commit-hooks.yml'
+      )
+      targets=()
+      targets "${pathspecs[@]}" > "${tmp}/targets"
+      while IFS= read -r -d '' t; do targets+=("${t}"); done < "${tmp}/targets"
+      if [ "${#targets[@]}" -eq 0 ]; then exit 0; fi
+
+      # --no-ignores は承認必須の .github/zizmor.yml による抑制まで無効化してしまうため、インラインコメント自体を禁止する
+      if git grep -InE 'zizmor:[[:space:]]*ignore' -- "${pathspecs[@]}"; then
+        echo "❌ インラインの ignore コメントは使用できません。.github/zizmor.yml で抑制してください（変更にはセキュリティチームの承認が必要）"
+        exit 1
+      fi
+
+      # 設定ファイルの自動探索は承認必須の対象外パスにも及ぶため、.github/zizmor.yml に固定する
+      args=(--no-progress --min-severity high --no-config)
+      if [ -f .github/zizmor.yml ]; then args=(--no-progress --min-severity high --config .github/zizmor.yml); fi
+      if [ -n "${GITHUB_ACTIONS:-}" ]; then args+=(--format github); fi
+
+      # GH_TOKEN があると online audit（impostor-commit 等）も有効になる。
+      # devops は private のため、対象 repo の github.token では devops を参照するファイルを online 監査できず fatal になる。
+      # devops だけを参照するファイルは online 監査を省略する（fork 禁止の private repo には fork 由来の impostor commit が成立しない）
+      online=("${targets[@]}")
+      offline=()
+      owner=${GITHUB_REPOSITORY_OWNER:-theindiehacker}
+      if [ -n "${GH_TOKEN:-}" ] && ! curl -fs -o /dev/null -H "Authorization: Bearer ${GH_TOKEN}" "${GITHUB_API_URL:-https://api.github.com}/repos/${owner}/devops"; then
+        online=()
+        self_ref="^${owner}/(devops|github-workflows)/"
+        for t in "${targets[@]}"; do
+          refs=$(yq -r '[explode(.) | .. | select(tag == "!!map" and has("uses")) | .uses] | .[]' "${t}" 2>/dev/null \
+            | grep -vE '^(\./|docker://|\$/)' || true)
+          if [ -n "${refs}" ] && ! grep -qivE "${self_ref}" <<< "${refs}"; then
+            offline+=("${t}")
+          else
+            online+=("${t}")
+          fi
+        done
+      fi
+
+      rc=0
+      if [ "${#online[@]}" -gt 0 ]; then zizmor "${args[@]}" "${online[@]}" || rc=$?; fi
+      if [ "${#offline[@]}" -gt 0 ]; then zizmor "${args[@]}" --no-online-audits "${offline[@]}" || rc=$?; fi
+      exit "${rc}"
+      BASH
+
+  security:check:ghalint:
+    desc: 🛡️ GitHub Actions のワークフローを ghalint でポリシーチェック（permissions・SHA 固定など）
+    dir: '{{.USER_WORKING_DIR}}'
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      if [ -z "$(git ls-files -- '.github/workflows/*.yml' '.github/workflows/*.yaml')" ]; then exit 0; fi
+      ghalint run
+      BASH
+
+  security:check:ruff:
+    desc: 🛡️ ruff の S ルール（bandit 相当。S101 を除く）で検査
+    dir: '{{.USER_WORKING_DIR}}'
+    cmd: |
+      bash <<'BASH'
+      {{.LIB}}
+      if [ -z "$(git ls-files -- ':(glob)**/*.py' ':(glob)**/*.pyi')" ]; then exit 0; fi
+      config=$(config_dir)/pyproject.toml
+      ruff check --no-fix --config "${config}" --select S --ignore S101 .
+      BASH

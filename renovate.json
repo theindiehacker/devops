@@ -30,6 +30,27 @@
       "datasourceTemplate": "github-releases",
       "extractVersionTemplate": "^v(?<version>.+)$",
       "versioningTemplate": "semver"
+    },
+    {
+      "description": "Taskfile.yml の vars にある <TOOL>_VERSION（uv run --with / uvx で使う Python ツール）を PyPI の最新版に更新する（datasource=pypi のブロックのみ対象、SHA256 は無い）。mise で導入するツールは mise.toml を Renovate 標準の mise manager が更新する",
+      "customType": "regex",
+      "managerFilePatterns": ["/^Taskfile\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=pypi depName=(?<depName>[^\\s]+?)\\s+[A-Z_]+_VERSION:\\s*\"?(?<currentValue>[^\\s\"]+)\"?"
+      ],
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
+    },
+    {
+      "description": ".tflint.hcl（全リポジトリ共通の tflint 設定）の plugin version を GitHub Releases の最新版に更新する（タグは v 付き、設定には v を除いて書く）",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.tflint\\.hcl$/"],
+      "matchStrings": [
+        "version\\s*=\\s*\"(?<currentValue>[^\"]+)\"\\s+source\\s*=\\s*\"github\\.com/(?<depName>[^\"]+)\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$",
+      "versioningTemplate": "semver"
     }
   ],
   "packageRules": [
@@ -38,5 +59,9 @@
       "matchPackageNames": ["oven-sh/bun"],
       "versioning": "regex:^bun-v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
     }
-  ]
+  ],
+  "pip-compile": {
+    "description": "tools/semgrep/requirements.txt（security:check:semgrep が使うハッシュ固定の依存）を requirements.in から作り直す",
+    "managerFilePatterns": ["/^tools/semgrep/requirements\\.txt$/"]
+  }
 }

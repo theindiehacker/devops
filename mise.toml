@@ -8,10 +8,19 @@ lefthook = "2.1.16"
 trivy = "0.73.0"
 actionlint = "1.7.12"
 shellcheck = "0.11.0"
+ghalint = "1.5.6"
+zizmor = "1.30.1"
+ruff = "0.16.10"
+uv = "0.12.23"
+bun = "1.4.2"
+biome = "2.5.2"
+jq = "1.8.1"
+yq = "4.53.6"
 
 [settings]
 experimental = true
 lockfile = true
 
 [hooks]
-postinstall = "lefthook install"
+# CI の composite action（.github/actions/task）は git リポジトリではない場所で mise install するため、git の外では何もしない
+postinstall = "if git rev-parse --git-dir >/dev/null 2>&1; then lefthook install; fi"

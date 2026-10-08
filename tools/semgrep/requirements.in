@@ -1,0 +1,3 @@
+# security:check:semgrep が使う Semgrep の版（Taskfile.yml）。変更したら次で requirements.txt を作り直す:
+#   uv pip compile --universal --generate-hashes --python-version 3.12 tools/semgrep/requirements.in -o tools/semgrep/requirements.txt
+semgrep==1.179.0

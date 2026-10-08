@@ -1,7 +1,20 @@
 # git フックの登録（lefthook install）は mise.toml の postinstall フックで行う
+# 中身は Taskfile.yml のタスク（CI の必須ワークフローと同じ検査）
 pre-commit:
-  # 前のジョブが落ちたら後続を打ち切る（整形前のコードを検証したりテストしたりしても意味がないため）
+  # 前のジョブが落ちたら後続を打ち切る（シークレットを含むコミットを整形しても意味がないため）
   piped: true
-  commands:
-    security:check:
+  jobs:
+    - name: security:check:gitleaks:staged
+      run: task security:check:gitleaks:staged
+    - name: style:fix
+      run: task style:fix
+      stage_fixed: true
+
+# 重い検査（依存の導入・mypy・trivy など）は push 時にまとめて行う
+pre-push:
+  piped: true
+  jobs:
+    - name: style:check
+      run: task style:check
+    - name: security:check
       run: task security:check

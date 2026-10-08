@@ -1,0 +1,44 @@
+name: "devops task"
+description: "devops の Taskfile.yml のタスクを、devops の mise.toml / mise.lock で固定したツールで実行する"
+
+# 必須ワークフローから `uses: theindiehacker/devops/.github/actions/task@main` で呼ぶ。
+# devops は private のため対象 repo の github.token では checkout できないが、action を参照すると
+# runner が devops 全体を github.action_path の上位にダウンロードするので、その Taskfile.yml / mise.toml を使う。
+#
+# タスクに渡す値（FILES / LOG_OPTS / BASELINE / IMAGE など。Taskfile.yml 冒頭を参照）は、呼び出し側の step の env で渡す。
+# トークンは対象 repo のコード（uv sync / bun install / terraform init など）に渡さないよう、ここでは設定しない。
+# 必要なタスク（tflint / zizmor）を呼ぶ step でだけ GH_TOKEN を渡す。
+inputs:
+  task:
+    description: "実行するタスク名（例: style:check:tflint）"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # ツールは mise.lock の checksum で検証してから導入する（lock があると mise-action が --locked を付ける）。
+    # 対象 repo の mise.toml を読まないよう、shims は PATH に入れず次の step で devops の環境だけを読み込む
+    - name: "ツールを導入"
+      uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c  # v4.3.0
+      env:
+        MISE_TRUSTED_CONFIG_PATHS: ${{ github.action_path }}/../../..
+        # mise-action は MISE_GITHUB_TOKEN が未設定だと job の env に書き出し、後続の step（対象 repo のコードを動かす）に渡ってしまう。
+        # この step の env で先に設定しておくと書き出されない
+        MISE_GITHUB_TOKEN: ${{ github.token }}
+      with:
+        version: "2026.9.15"
+        sha256: 09ea631d6f3e7031d63606a0892dc4c796f9fb57f493bc45937f9f7113c88216
+        working_directory: ${{ github.action_path }}/../../..
+        add_shims_to_path: "false"
+        env: "false"
+        export_path: "false"
+
+    - name: "task ${{ inputs.task }}"
+      shell: bash
+      env:
+        DEVOPS: ${{ github.action_path }}/../../..
+        MISE_TRUSTED_CONFIG_PATHS: ${{ github.action_path }}/../../..
+        TASK: ${{ inputs.task }}
+      run: |
+        eval "$(mise -C "${DEVOPS}" env -s bash)"
+        task -t "${DEVOPS}/Taskfile.yml" "${TASK}"
