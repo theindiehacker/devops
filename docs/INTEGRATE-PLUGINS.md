@@ -73,12 +73,12 @@ devops/
 ## 実施手順
 1. ✅ この設計の合意
 2. ✅ devops に fastship-plugins の履歴をマージし、参照先を直す PR を出す
-3. 公開前チェックの残り（PR・Issue・Actions のログの確認）
-4. devops を PUBLIC にし、fork PR の承認設定を入れる
-5. 2 の PR をマージする。Claude ワークフローのプラグインの取得先が devops になるため、PUBLIC にする前にマージすると、他リポジトリの CI がプラグインを取れなくなる
-6. 利用者がマーケットプレイスを devops で追加し直す
-7. Web セッションで、devops をセッションに追加せずに `task --yes init` と commit が通るか確認する
-8. fastship-plugins を削除する
+3. ✅ 公開前チェックの残り（PR・Issue・コメントを確認し、PR #68 の他リポジトリの検査結果と編集履歴を削除。Actions のログは devops 自身の結果だけでシークレットも伏せ字のため未確認）
+4. ✅ devops を PUBLIC にし、fork PR の承認設定を入れる
+5. ✅ 2 の PR をマージする。Claude ワークフローのプラグインの取得先が devops になるため、PUBLIC にする前にマージすると、他リポジトリの CI がプラグインを取れなくなる
+6. ✅ 利用者がマーケットプレイスを devops で追加し直す
+7. ✅ Web セッションで、devops をセッションに追加せずに `task --yes init` と commit が通るか確認する（devops の clone 内で確認。app.fastship.jp からの remote include は未確認）
+8. ✅ fastship-plugins を削除する（2026-10-09）
 
 ## 対象外
 - Web 用のセットアップ（Setup script / SessionStart hook）は、統合後に別の設計で扱う
