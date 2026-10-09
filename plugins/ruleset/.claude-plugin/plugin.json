@@ -1,0 +1,8 @@
+{
+  "name": "ruleset",
+  "displayName": "FastShip 実装ルール",
+  "version": "0.2.1",
+  "description": "全社共通の実装ルール。対象ファイルを扱うときに paths 付き skill として自動で読み込まれる",
+  "repository": "https://github.com/theindiehacker/devops",
+  "keywords": ["rules", "ddd", "github-actions"]
+}

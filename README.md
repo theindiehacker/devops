@@ -1,5 +1,5 @@
 # 🛠️ DevOps ( 👉 FastShip CLI )
-Organization 共通の CI / ruleset / Lefthook / Taskfile を管理するリポジトリ
+Organization 共通の CI / ruleset / Lefthook / Taskfile / Claude Code プラグインを管理するリポジトリ
 
 ```mermaid
 graph TD;
@@ -49,6 +49,32 @@ remotes:
 
 > ⚠️ devops は PRIVATE のため、参照元の環境（開発者のマシン・CI・claude.ai/code）から devops を git clone できる必要がある。
 > Task は remote の Taskfile を初めて読むときに確認を求めるため、非対話の環境では `task --yes ...` で実行する。
+
+## 🧩 Claude Code プラグイン
+このリポジトリは Claude Code プラグインのマーケットプレイス（`fastship`）を兼ねる。プラグインの開発方法は [CONTRIBUTING.md](./CONTRIBUTING.md) を参照。
+
+### 🧰 Install
+```
+/plugin marketplace add https://github.com/theindiehacker/devops.git
+```
+
+<details><summary><b>🛠️ 開発(<code>/dev:</code>)プラグイン</b></summary>
+
+```
+/plugin install security-guidance@claude-plugins-official
+/plugin install dev@fastship  # 依存する ruleset@fastship も有効になる
+```
+
+</details>
+
+### 🔄 Update
+マーケットプレイスを最新化してから、インストール済みプラグインを更新する。
+
+```
+/plugin marketplace update fastship
+```
+
+以降、`/plugin` コマンドからプラグイン一覧・更新状況を確認できる。
 
 ## ❓ 使い方
 ### 🎊 セットアップ
