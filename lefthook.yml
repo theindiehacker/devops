@@ -6,4 +6,6 @@ pre-commit:
     security:check:
       # git がフックに渡す GIT_INDEX_FILE を task に引き継ぐと、remote の Taskfile を取る git clone が
       # コミット中のインデックスに devops のファイルを書き込んでしまう。外して SCAN_INDEX_FILE で受け渡す
-      run: env -u GIT_INDEX_FILE SCAN_INDEX_FILE="${GIT_INDEX_FILE:-}" task security:check
+      # 非対話の環境（GUI クライアント・Claude Code on the web）でも remote の Taskfile の信頼確認で止まらないよう --yes を付ける。
+      # 参照先は各リポジトリがタグで固定しており、タグの更新は PR のレビューを通る
+      run: env -u GIT_INDEX_FILE SCAN_INDEX_FILE="${GIT_INDEX_FILE:-}" task --yes security:check
