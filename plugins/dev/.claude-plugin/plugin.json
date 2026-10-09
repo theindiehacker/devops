@@ -1,0 +1,9 @@
+{
+  "name": "dev",
+  "displayName": "FastShip 開発プラグイン",
+  "version": "0.5.1",
+  "description": "全社共通の開発ワークフロープラグイン",
+  "repository": "https://github.com/theindiehacker/fastship-plugins",
+  "keywords": ["workflow", "github", "hooks"],
+  "dependencies": ["ruleset", "security-guidance@claude-plugins-official"]
+}
