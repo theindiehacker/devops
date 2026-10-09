@@ -33,7 +33,7 @@ version: '3'
 
 includes:
   common:
-    taskfile: https://github.com/theindiehacker/devops.git//Taskfile.yml?ref=v1.3.0
+    taskfile: https://github.com/theindiehacker/devops.git//Taskfile.yml?ref=v1.4.1
     # 共通 lefthook.yml が `task security:check` を名前空間なしで呼ぶため、タスクをトップレベルに展開する
     flatten: true
 ```
@@ -42,13 +42,32 @@ includes:
 # lefthook.yml
 remotes:
   - git_url: https://github.com/theindiehacker/devops
-    ref: v1.3.0
+    ref: v1.4.1
     configs:
       - lefthook.yml
 ```
 
 > ⚠️ devops は PRIVATE のため、参照元の環境（開発者のマシン・CI・claude.ai/code）から devops を git clone できる必要がある。
 > Task は remote の Taskfile を初めて読むときに確認を求めるため、非対話の環境では `task --yes ...` で実行する。
+
+Claude Code on the web で pre-commit を動かすには、`.claude/settings.json` に次の SessionStart hook も置く（詳細は [docs/CLAUDE-WEB-SETUP.md](./docs/CLAUDE-WEB-SETUP.md)）。
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -fsSL https://raw.githubusercontent.com/theindiehacker/devops/v1.4.1/scripts/claude-web-setup.sh | bash"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
 
 ## 🧩 Claude Code プラグイン
 このリポジトリは Claude Code プラグインのマーケットプレイス（`fastship`）を兼ねる。プラグインの開発方法は [CONTRIBUTING.md](./CONTRIBUTING.md) を参照。
