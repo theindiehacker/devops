@@ -339,7 +339,7 @@ Rules セクションで以下のチェックを外す:
 | `devops` | `main` | `.github/workflows/typescript.yml` | TypeScript の規約(Bun での依存管理)・lint・書式・型・未使用パッケージ |
 
 > 必須ワークフローは、対象 repo のコードを実行してよい(`python.yml` / `typescript.yml` の `uv sync` / `bun install` による依存導入と、その環境上で動く mypy(プラグインを含む) / lint-imports / deptry / Biome / knip / tsc、`terraform.yml` の `terraform init` / `validate` / `test` が実行する provider・module など)。ただし次を守る。
-> - `permissions` は read のみとし、secrets を使わない。トリガーは `pull_request` とし、`pull_request_target` では動かさない
+> - `permissions` は read のみとし、secrets を使わない(例外: `terraform.yml` の `terraform init` の step にだけ、private の Module Registry(registry.fastship.jp)の読み取りトークン `REGISTRY_TOKEN` を渡す)。トリガーは `pull_request` とし、`pull_request_target` では動かさない
 > - `actions/checkout` は `persist-credentials: false` にする
 > - repo の環境に依存して失敗し得る前提は、下の「導入時の前提」に書く。対応できない repo は「例外運用」で外す
 >
@@ -359,6 +359,7 @@ Rules セクションで以下のチェックを外す:
 7. `terraform test` がクラウドの認証情報を必要とする(認証情報は渡さないため、`command = plan` と `mock_provider` で完結するテストだけが通る)
 8. Terraform 1.16.0(`terraform.yml` で固定)で動かない `required_version` を宣言している
 9. tflint(`tflint.yml` の固定設定)の違反がある、または `.tf` に `tflint-ignore` コメントがある(違反は変更したディレクトリのみ検査するが、`tflint-ignore` の禁止は repo 全体が対象)
+10. registry.fastship.jp のモジュールを使っているのに、Organization の secret `REGISTRY_TOKEN` へのアクセスが許可されていない(`terraform init` が 401 で失敗する)
 
 **例外運用** : ランナーで依存を導入できない repo(private index の認証が必要など)が出た場合だけ、その repo を `Bypass list` に追加するか、`Target repositories` を `Dynamic list by property` 等に変更して対象から外す。規約・lint・書式の検査も併せて外れる。
 

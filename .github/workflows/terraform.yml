@@ -6,7 +6,9 @@ name: "🏗️ terraform"
 # ⚠️ 必須ワークフローは on: のフィルタが無視され全 PR で起動するため、対象の判定は job 内で行う
 #    （All repositories 適用のため、Terraform の変更が無い PR では skip し run は success にする）。
 # terraform init / test は PR に書かれた provider・module・data source を実行するため、
-# 権限は contents: read（と paths-filter 用の pull-requests: read）のみとし、secrets も使わない。
+# 権限は contents: read（と paths-filter 用の pull-requests: read）のみとする。
+# secrets は private の Module Registry（registry.fastship.jp）の読み取りトークン（REGISTRY_TOKEN）だけを、
+# module の取得のため terraform init の step にだけ渡す（validate / test の step には渡さない）。
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -92,12 +94,14 @@ jobs:
           restore-keys: |
             terraform-plugins-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: "terraform validate"
-        id: validate
+      - name: "terraform init"
+        id: init
         if: steps.collect.outputs.found == 'true'
         shell: bash
         env:
           TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
+          # terraform はこのホストへのリクエストにだけトークンを付ける。secret が無い repo では空になり、registry を使わない repo には影響しない
+          TF_TOKEN_registry_fastship_jp: ${{ secrets.REGISTRY_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p "${TF_PLUGIN_CACHE_DIR}"
@@ -112,13 +116,12 @@ jobs:
             args=(-backend=false)
             if [ -f "${dir}/.terraform.lock.hcl" ]; then args+=(-lockfile=readonly); fi
 
-            # init に失敗したディレクトリは validate しない（module・provider が未導入なことによる二次的なエラーしか出ない）。
+            # init に失敗したディレクトリは validate / test しない（module・provider が未導入なことによる二次的なエラーしか出ない）。
             # lock ファイルに無いハッシュ（多くは linux_amd64 のもの）を readonly のため追記できなかったときは、
             # init は警告だけで成功するが provider を検証できないため失敗とする
             if terraform -chdir="${dir}" init "${args[@]}" < /dev/null 2>&1 | tee "${RUNNER_TEMP}/init.log" \
               && ! grep -q 'Provider lock file not updated' "${RUNNER_TEMP}/init.log"; then
               printf '%s\n' "${dir}" >> "${RUNNER_TEMP}/initialized.txt"
-              terraform -chdir="${dir}" validate < /dev/null || status=1
             else
               status=1
             fi
@@ -126,9 +129,26 @@ jobs:
           done < "${RUNNER_TEMP}/dirs.txt"
           exit "${status}"
 
+      - name: "terraform validate"
+        # init が失敗しても、init できたディレクトリは validate する
+        if: ${{ !cancelled() && steps.init.outcome != 'skipped' }}
+        shell: bash
+        env:
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
+        run: |
+          set -euo pipefail
+
+          status=0
+          while IFS= read -r dir; do
+            echo "::group::${dir//%/%25}"
+            terraform -chdir="${dir}" validate < /dev/null || status=1
+            echo "::endgroup::"
+          done < "${RUNNER_TEMP}/initialized.txt"
+          exit "${status}"
+
       - name: "terraform test"
-        # validate が失敗しても、init できたディレクトリのテストは実行する
-        if: ${{ !cancelled() && steps.validate.outcome != 'skipped' }}
+        # init / validate が失敗しても、init できたディレクトリのテストは実行する
+        if: ${{ !cancelled() && steps.init.outcome != 'skipped' }}
         shell: bash
         env:
           TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
