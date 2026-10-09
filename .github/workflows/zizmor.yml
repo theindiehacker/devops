@@ -128,10 +128,10 @@ jobs:
           fi
           mapfile -t targets < "${list}"
 
-          # 本リポジトリ（<org>/devops）が private だと、対象リポジトリの github.token では参照先を読めず、
-          # 本リポジトリの reusable workflow を参照するファイル（Claude レビューの caller 等）の impostor-commit が
-          # findings ではなく fatal で終了する（#21）。そこで実行トークンで本リポジトリを読めるかを先に確認し、
-          # 読めるなら従来どおり全件 online、読めない場合だけ本リポジトリのみを参照するファイルを online 監査なしで実行する。
+          # 組織の reusable workflow を置くリポジトリ（<org>/devops・<org>/terraform-modules）が private だと、対象リポジトリの
+          # github.token では参照先を読めず、それらの reusable workflow を参照するファイル（Claude レビューや Terraform の caller 等）の
+          # impostor-commit が findings ではなく fatal で終了する（#21）。そこで実行トークンで読めるかをリポジトリごとに先に確認し、
+          # すべて読めるなら従来どおり全件 online、読めないリポジトリがあれば、それらのみを参照するファイルを online 監査なしで実行する。
           # fork 禁止の private リポジトリには fork 由来の impostor commit が成立せず、ブランチ / タグに属さない SHA の検知は
           # github.token ではどのみち監査できないため、この省略で新たに失う検知は無い。
           # 他の action を 1 つでも参照するファイルは従来どおり online で監査するため、免除を抜け道にはできない。
@@ -139,18 +139,24 @@ jobs:
           #       https://github.com/zizmorcore/zizmor/issues/1350
           online=()
           offline=()
-          if curl -fs -o /dev/null -H "Authorization: Bearer ${GH_TOKEN}" "${GITHUB_API_URL}/repos/${OWNER}/devops"; then
+          # 読めるリポジトリ（public の devops 等）は fork 由来の impostor commit が成立しうるため、免除しない
+          unreadable=""
+          for repo in devops terraform-modules; do
+            curl -fs -o /dev/null -H "Authorization: Bearer ${GH_TOKEN}" "${GITHUB_API_URL}/repos/${OWNER}/${repo}" \
+              || unreadable="${unreadable:+${unreadable}|}${repo}"
+          done
+          if [ -z "${unreadable}" ]; then
             online=("${targets[@]}")
             targets=()
           fi
           # 振り分けには mikefarah/yq（ubuntu-latest に同梱）が必要。無い / 別実装（Python 版 yq 等）だと解析失敗として
           # 全件が黙って online に倒れ、caller が原因表示なしで fatal になるため、ツールの不在は明示的に失敗させる
           if [ "${#targets[@]}" -gt 0 ] && ! { yq --version 2>/dev/null | grep -q 'mikefarah/yq'; }; then
-            echo "::error::mikefarah/yq が見つかりません（${OWNER}/devops を参照するファイルの振り分けに必要）"
+            echo "::error::mikefarah/yq が見つかりません（読めないリポジトリを参照するファイルの振り分けに必要）"
             exit 1
           fi
           # 旧名（github-workflows）は改名前の参照が残る caller 用。全 caller の移行後に削除する
-          self_ref="^${OWNER}/(devops|github-workflows)/"
+          self_ref="^${OWNER}/(${unreadable/devops/devops|github-workflows})/"
           for t in "${targets[@]}"; do
             # YAML を解析して uses: の値を再帰的に集める（flow 形式・引用符付きキー・アンカーも対象。zizmor と同じ見え方にする）。
             # 解析に失敗したファイルは refs が空になり online 側に倒れる（fatal で気付ける安全側）
@@ -159,12 +165,12 @@ jobs:
             # owner / repo 名は大文字小文字を区別しない
             if [ -n "${refs}" ] && ! grep -qivE "${self_ref}" <<< "${refs}"; then
               offline+=("${t}")
-              echo "::notice file=${t}::${OWNER}/devops のみを参照するため online 監査を省略しました（理由は devops の .github/workflows/zizmor.yml を参照）"
+              echo "::notice file=${t}::読めないリポジトリ（${unreadable}）のみを参照するため online 監査を省略しました（理由は devops の .github/workflows/zizmor.yml を参照）"
             else
               online+=("${t}")
-              # 本リポジトリと他の action の参照が混在すると online 側で generic な fatal になるため、原因を先に示す
+              # 読めないリポジトリと他の action の参照が混在すると online 側で generic な fatal になるため、原因を先に示す
               if grep -qiE "${self_ref}" <<< "${refs}"; then
-                echo "::warning file=${t}::${OWNER}/devops と他の action の参照が混在しています。devops を読めないため、このファイルの online 監査（impostor-commit）は fatal になります。devops の参照は別ファイルに分けてください"
+                echo "::warning file=${t}::読めないリポジトリ（${unreadable}）と他の action の参照が混在しています。そのため、このファイルの online 監査（impostor-commit）は fatal になります。それらの参照は別ファイルに分けてください"
               fi
             fi
           done
