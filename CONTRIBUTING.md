@@ -1,6 +1,6 @@
 # Contributing
 
-`theindiehacker/fastship-plugins` は組織全体に配布する Claude Code プラグインのマーケットプレイスです。このドキュメントではプラグインの開発方法を説明します。
+`theindiehacker/devops` は、組織全体に配布する Claude Code プラグインのマーケットプレイス（`fastship`）を兼ねています。このドキュメントではプラグインの開発方法を説明します。
 
 ## 構成
 
@@ -27,6 +27,8 @@ plugins/<plugin-name>/
 **プラグインの中身を変更したら、必ず対応する `plugins/<plugin-name>/.claude-plugin/plugin.json` の `version` を上げてください。**
 
 `/plugin marketplace update` はマーケットプレイスの `main` ブランチを取得しますが、インストール済みプラグインのローカルキャッシュ（`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`）は `version` が変わらない限り更新されません。`version` を上げ忘れると、リポジトリ側の変更（スキル追加・リネーム・内容修正など）がユーザー環境に一切反映されず、「新しいスキルが表示されない」といった不具合の原因になります。
+
+プラグインのバージョンは、リポジトリの git タグ（reusable workflow / Taskfile / lefthook 用）とは別に管理します。プラグインだけの変更では Release ワークフローを実行しないでください（全リポジトリに Renovate の参照更新 PR が届くため）。
 
 バージョンの上げ方の目安（[SemVer](https://semver.org/lang/ja/) 準拠）:
 

@@ -113,7 +113,7 @@ jobs:
           # dev は security-guidance@claude-plugins-official に依存するため、公式マーケットプレイスも追加する
           plugin_marketplaces: |
             https://github.com/anthropics/claude-plugins-official.git
-            https://github.com/theindiehacker/fastship-plugins.git
+            https://github.com/theindiehacker/devops.git
           plugins: dev@fastship
           track_progress: 'true'
           show_full_output: false

@@ -12,10 +12,10 @@ Organization アカウントにあるテンプレートリポジトリを確認�
  - テンプレートリポジトリがない場合はスキップしてください。
 
 ## 2. GitHub Actions の実装
-`https://github.com/{組織アカウント}/github-workflows` (実際は、具体的な組織アカウント名を指定) を参照して、対象リポジトリに導入できる caller の github workflows を実装してください。
+`https://github.com/{組織アカウント}/devops` (実際は、具体的な組織アカウント名を指定) を参照して、対象リポジトリに導入できる caller の github workflows を実装してください。
 
 ## 3. tflint 設定の導入
-Terraform (`*.tf`) を含むリポジトリでは、`https://github.com/{組織アカウント}/github-workflows` の `.github/workflows/tflint.yml` にある `TFLINT_HCL` と同じ内容で、リポジトリ直下に `.tflint.hcl` を作成してください (既にある場合は上書き)。
+Terraform (`*.tf`) を含むリポジトリでは、`https://github.com/{組織アカウント}/devops` の `.github/workflows/tflint.yml` にある `TFLINT_HCL` と同じ内容で、リポジトリ直下に `.tflint.hcl` を作成してください (既にある場合は上書き)。
 
  - CI はこのファイルを読まず `tflint.yml` の設定で固定しているため、ローカル実行 (`tflint --recursive --config="$(pwd)/.tflint.hcl"`) を CI と揃えるためのものです。
  - サブディレクトリの `.tflint.hcl` は削除してください。

@@ -1,6 +1,6 @@
-# fastship-plugins を devops に統合し、PUBLIC にする（設計案）
+# fastship-plugins を devops に統合し、PUBLIC にする
 
-> レビュー用の設計案。合意してから実装する。
+> 2026-10-09 合意済み。fastship-plugins は削除する。README のタイトルは変えない。
 
 ## 目的
 - 組織共通の開発基盤（CI / Taskfile / lefthook / mise / Claude Code プラグイン）を 1 リポジトリで管理し、2 リポジトリ間の同期をなくす
@@ -53,7 +53,7 @@ devops/
 - devops の Claude ワークフロー 3 本の `plugin_marketplaces` を devops に変える
 - `plugin.json` の `repository` を devops に変える
 - `dev:setup` の旧名 `github-workflows` を devops に直す
-- fastship-plugins は README に移転先を書いて archive する（削除しない）
+- fastship-plugins は、切り替えを確認したあとに削除する
 
 ### 2. devops を PUBLIC にする
 公開前に次を行う。
@@ -71,14 +71,14 @@ devops/
 プラグインだけの変更ではタグを切らない。タグを切ると、全リポジトリに Renovate の参照更新 PR が届くため。
 
 ## 実施手順
-1. この設計の合意
-2. devops に fastship-plugins の履歴をマージし、参照先を直す PR を出す
+1. ✅ この設計の合意
+2. ✅ devops に fastship-plugins の履歴をマージし、参照先を直す PR を出す
 3. 公開前チェックの残り（PR・Issue・Actions のログの確認）
 4. devops を PUBLIC にし、fork PR の承認設定を入れる
-5. Web セッションで、devops をセッションに追加せずに `task --yes init` と commit が通るか確認する
-6. fastship-plugins を archive する
+5. 2 の PR をマージする。Claude ワークフローのプラグインの取得先が devops になるため、PUBLIC にする前にマージすると、他リポジトリの CI がプラグインを取れなくなる
+6. 利用者がマーケットプレイスを devops で追加し直す
+7. Web セッションで、devops をセッションに追加せずに `task --yes init` と commit が通るか確認する
+8. fastship-plugins を削除する
 
-## 未決事項
-- fastship-plugins を archive するか、削除するか（archive を推奨。古い URL を参照する人に移転先を示せる）
-- README のタイトル「DevOps ( 👉 FastShip CLI )」をどうするか
+## 対象外
 - Web 用のセットアップ（Setup script / SessionStart hook）は、統合後に別の設計で扱う

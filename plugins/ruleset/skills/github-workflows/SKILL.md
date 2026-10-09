@@ -26,4 +26,4 @@ user-invocable: false
    - 対処方法:
      1. Action の利用を検討する。
      2. 「そもそもこの機能/実装は必要か？」「そもそもこの仕様が業界標準・ベストプラクティスなのか？」と振り返る。必要に応じてレビュアーに提案する。
-     3. composite action として切り出す（`theindiehacker/github-workflows/<path>@<ref>` で参照する）。
+     3. composite action として切り出す（`theindiehacker/devops/<path>@<ref>` で参照する）。
