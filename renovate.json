@@ -11,6 +11,15 @@
       "versioningTemplate": "semver"
     },
     {
+      "description": "scripts/*.sh のツール導入の VERSION と SHA256 を更新する（シェル変数の代入形式。SHA256 は release アセットの digest から算出される。VERSION には GitHub release のタグ名そのものを書く）",
+      "customType": "regex",
+      "managerFilePatterns": ["/^scripts/[^/]+\\.sh$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[a-zA-Z0-9-._]+?) depName=(?<depName>[^\\s]+?)\\s+[A-Z0-9_]*VERSION=\"(?<currentValue>[^\"]+)\"\\s+[A-Z0-9_]*SHA256=\"(?<currentDigest>[^\"]+)\"\\s"
+      ],
+      "versioningTemplate": "semver"
+    },
+    {
       "description": "Python ツール導入 step の <TOOL>_VERSION を PyPI の最新版に更新する（datasource=pypi のブロックのみ対象、SHA256 は無い）",
       "customType": "regex",
       "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.yml$/"],

@@ -20,3 +20,13 @@ Terraform (`*.tf`) を含むリポジトリでは、`https://github.com/{組織�
  - CI はこのファイルを読まず `tflint.yml` の設定で固定しているため、ローカル実行 (`tflint --recursive --config="$(pwd)/.tflint.hcl"`) を CI と揃えるためのものです。
  - サブディレクトリの `.tflint.hcl` は削除してください。
  - `tflint-ignore` コメントは CI で禁止されているため、削除して違反を修正してください。
+
+## 4. Taskfile / lefthook / mise の導入
+`https://github.com/{組織アカウント}/devops` の README「📦 共通設定の配布」に従って、次のファイルを置いてください (既にある場合は最新版に更新)。参照するタグは devops の最新のリリースタグにしてください。
+
+ - `Taskfile.yml` / `lefthook.yml`: devops をタグで参照する
+ - `mise.toml` / `mise.lock`: devops の同じタグからコピーする
+ - `.gitignore`: `.task/` を追加する
+
+## 5. Claude Code on the web のセットアップ
+devops の `docs/CLAUDE-WEB-SETUP.md` に従って、`.claude/settings.json` の `hooks.SessionStart` に、devops の `scripts/claude-web-setup.sh` を 4 と同じタグで取得・実行する hook を追加してください (既存の設定は残す)。

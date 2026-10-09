@@ -1,6 +1,6 @@
-# Claude Code on the web のセットアップ（設計案）
+# Claude Code on the web のセットアップ
 
-> レビュー用の設計案。合意してから実装する。
+> 2026-10-09 合意済み（SessionStart hook で、スクリプトは devops から取得する）。
 
 ## 目的
 Claude Code on the web（以下 Web）のセッションでも、ローカルと同じように pre-commit（`task security:check`）を動かす。
@@ -56,13 +56,23 @@ A を採用する。B は、速さが問題になったときに足す。
 
 ### devops に置くスクリプト（`scripts/claude-web-setup.sh`）
 1. `CLAUDE_CODE_REMOTE` が `true` でなければ何もしない（ローカルでは動かさない）
-2. mise を GitHub Releases から入れる。バージョンと SHA-256 はスクリプトに固定し、Renovate で更新する
+2. mise を GitHub Releases から入れる。バージョンと SHA-256 はスクリプトに固定し、Renovate（`renovate.json` の `scripts/*.sh` 用の custom manager）で更新する
 3. `$CLAUDE_PROJECT_DIR` で `mise trust` と `mise install --yes` を実行する。ツールは mise.lock から入り、`postinstall` で `lefthook install` まで済む
 4. mise と各ツールの PATH を `CLAUDE_ENV_FILE` に書く（Claude が実行する `git commit` から lefthook と task を呼べるように）
 5. 失敗しても 0 で終わり、警告だけ出す。CI の必須ワークフロー（gitleaks）が最後の砦になる
 
-## 確認方法
-1. app.fastship.jp の PR #3 のブランチに `.claude/settings.json` を足す（参照先はこのブランチ）
+## 確認結果
+Docker（Ubuntu 24.04、amd64）で Web の環境を再現し、app.fastship.jp の main で確認した。api.github.com、mise.run、mise.jdx.dev は hosts で塞いだ。
+
+| 確認 | 結果 |
+|:--|:--|
+| 初回のセットアップ | ✅ mise と 9 ツールが入り、pre-commit フックが登録される（39 秒。amd64 のエミュレーション込み） |
+| 2 回目（セッションの再開） | ✅ 8 秒。`CLAUDE_ENV_FILE` に同じ行を重ねて書かない |
+| `git commit` | ✅ gitleaks が動く。devops のファイルはインデックスに混ざらない |
+| シークレット（Slack 形式のダミー）を含めた commit | ✅ `leaks found: 1` で止まる |
+
+## 実機での確認方法
+1. app.fastship.jp に `.claude/settings.json` を足す（参照先はこのスクリプトを含むリリースタグ）
 2. その状態で Web セッションを開き、次を確かめる
    - セッション開始時に、ツールとフックが入る
    - `git commit` で gitleaks が動く
@@ -72,6 +82,3 @@ A を採用する。B は、速さが問題になったときに足す。
 ## 対象外
 - 複数リポジトリのセッション（SessionStart hook が読まれない）。必要になったら Setup script を足す
 - Taskfile の `init` が mise.run を使う件（ローカル用なので変えない）
-
-## 未決事項
-- スクリプトを devops から取得するか、各リポジトリにコピーするか（取得を推奨。配布方法を Taskfile / lefthook と揃えられる）
