@@ -85,7 +85,7 @@ jobs:
           persist-credentials: true
 
       - name: Run Claude Code Review
-        uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea  # v1.0.241
+        uses: anthropics/claude-code-action@6fed3ca145920b639991cb756090506e1bcaf515  # v1.0.245
         env:
           # バックグラウンドを有効化しておくとレビューが投稿されずにワークフローが終了するため、無効化
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
