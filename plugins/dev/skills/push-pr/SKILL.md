@@ -91,7 +91,7 @@ CI の指摘（該当行へのインラインコメントとして投稿され�
 - `backend/test/**/*.py` の変更 → `ruleset:backend-test`
 - `.github/**/*.yml` の変更 → `ruleset:github-workflows`
 - `*.tf` / `*.hcl` の変更 → `ruleset:terraform`
-- その他 (マイグレーション / E2E) → `ruleset:migration` / `ruleset:e2e`
+- その他 (E2E) → `ruleset:e2e`
 
 ### 2. PR の存在確認
 
