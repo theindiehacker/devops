@@ -99,3 +99,21 @@ Claude Code on the web で pre-commit を動かすには、`.claude/settings.jso
 ### 🎊 セットアップ
 
 [docs/SETUP.md](./docs/SETUP.md) を参照して、実行してください。
+
+### 🤖 Claude Code on Web
+
+<details><summary>🏃 <b>Issue が起票されたら設計・開発を始める</b></summary>
+
+https://claude.ai/code/routines にアクセスして、以下のように設定する
+
+
+<img src="docs/Claude%20Code%20on%20Web/1.png" width="500" alt="「新しいルーティン」"><br/>
+
+<img src="docs/Claude%20Code%20on%20Web/2.png" width="500" alt="「リポジトリを選択」"><br/>
+
+<img src="docs/Claude%20Code%20on%20Web/3.png" width="500" alt="「GitHubイベント」"><br/>
+
+<img src="docs/Claude%20Code%20on%20Web/4.png" width="500" alt="「課題:ラベル付き」"><br/>
+*任意のラベル名(画面では `claude:implement`)を指定する*
+
+</details>
