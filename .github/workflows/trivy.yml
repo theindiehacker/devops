@@ -11,7 +11,8 @@ name: "🛡️ Trivy スキャン"
 # Required workflow は inputs を受け取れないため、イメージのビルド方法は規約で決める:
 #   - .github/trivy-image.yml があれば、列挙された image だけをビルドする
 #   - 無ければ Dockerfile / Dockerfile.* / *.Dockerfile を自動検出し、置き場所を build context に、
-#     最終ステージ（ほかのステージから FROM・COPY --from・RUN --mount の from= で使われないステージ）をすべて target にする
+#     最終ステージ（ほかのステージから FROM・COPY --from・RUN --mount の from= で使われないステージ）をすべて target にする。
+#     最後のステージ（ビルドの既定）は必ず含める
 #   （決め方は .github/actions/trivy-images。action を変えたら、下の uses の SHA も上げる）
 #
 # .github/trivy-image.yml の書式（ビルドに secrets が必要な repo は images: [] で opt-out する）:
@@ -98,7 +99,7 @@ jobs:
       - name: "スキャンするイメージを決定"
         id: images
         # 必須ワークフローは対象 repo で動くため、この repo の action はパスではなく SHA で参照する
-        uses: theindiehacker/devops/.github/actions/trivy-images@5f6644248b7a1985342bfddc326d9665d417eada
+        uses: theindiehacker/devops/.github/actions/trivy-images@c07f900e075aa182c357be4492ae720e437d96a0
 
   scan-fs:
     name: "依存パッケージ / IaC をスキャン"
