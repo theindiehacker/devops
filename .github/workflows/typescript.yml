@@ -85,6 +85,12 @@ jobs:
           find . \( -path ./.git -o -name node_modules \) -prune -o \
             -name tsconfig.json -printf '%h\n' \
             | sed 's|^\./||' | sort > "${RUNNER_TEMP}/tsconfigs.txt"
+          # 型チェック単位のうち、package.json の依存に next を持つもの (Next.js のプロジェクト)
+          while IFS= read -r dir; do
+            if jq -e '.dependencies.next // .devDependencies.next' "${dir}/package.json" > /dev/null 2>&1; then
+              echo "${dir}"
+            fi
+          done < "${RUNNER_TEMP}/tsconfigs.txt" > "${RUNNER_TEMP}/nextjs.txt"
           cat "${RUNNER_TEMP}/roots.txt" "${RUNNER_TEMP}/tsconfigs.txt"
 
           if [ -s "${RUNNER_TEMP}/roots.txt" ]; then
@@ -147,6 +153,13 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash
         run: '"${RUNNER_TEMP}/each" "${RUNNER_TEMP}/roots.txt" bun run knip --dependencies'
+
+      - name: "next typegen"
+        # Next.js はルートの型 (LayoutProps・PageProps など) と next-env.d.ts を生成し、生成物は gitignore する。
+        # Next.js 公式の CI での型チェック (next typegen && tsc --noEmit) に合わせ、tsc の前に生成する
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: '"${RUNNER_TEMP}/each" "${RUNNER_TEMP}/nextjs.txt" bun run next typegen'
 
       - name: "tsc"
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
