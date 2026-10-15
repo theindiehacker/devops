@@ -10,7 +10,9 @@ name: "🛡️ Trivy スキャン"
 #
 # Required workflow は inputs を受け取れないため、イメージのビルド方法は規約で決める:
 #   - .github/trivy-image.yml があれば、列挙された image だけをビルドする
-#   - 無ければ Dockerfile / Dockerfile.* / *.Dockerfile を自動検出し、置き場所を build context にする
+#   - 無ければ Dockerfile / Dockerfile.* / *.Dockerfile を自動検出し、置き場所を build context に、
+#     最終ステージ（ほかのステージから FROM・COPY --from・RUN --mount の from= で使われないステージ）をすべて target にする
+#   （決め方は .github/actions/trivy-images。action を変えたら、下の uses の SHA も上げる）
 #
 # .github/trivy-image.yml の書式（ビルドに secrets が必要な repo は images: [] で opt-out する）:
 #   images:
@@ -95,54 +97,8 @@ jobs:
 
       - name: "スキャンするイメージを決定"
         id: images
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          manifest=""
-          for f in .github/trivy-image.yml .github/trivy-image.yaml; do
-            if [ -f "${f}" ]; then manifest="${f}"; break; fi
-          done
-
-          # 1. ビルドするイメージの一覧を作る（マニフェスト優先。無ければ Dockerfile を自動検出）
-          if [ -n "${manifest}" ]; then
-            echo "${manifest} に列挙されたイメージをスキャンする"
-            list=$(yq --output-format=json '.images // []' "${manifest}")
-          else
-            echo "Dockerfile を自動検出してスキャンする"
-            # Dockerfile.dockerignore（buildx の Dockerfile 別 ignore ファイル）は Dockerfile ではないので除外する
-            list=$(
-              find . -path ./.git -prune -o -type f \
-                \( -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name '*.Dockerfile' \) \
-                ! -name '*.dockerignore' -print \
-                | sed 's|^\./||' | sort | jq --raw-input '{dockerfile: .}' | jq --slurp --compact-output .
-            )
-          fi
-
-          # 2. matrix で使う形に整える（label は job 名、suffix は cache scope / artifact 名に使う）
-          images=$(jq --compact-output '
-            map(
-              (.dockerfile // "") as $df | (.target // "") as $target |
-              {
-                dockerfile: $df,
-                context: (.context // ($df | split("/") | .[:-1] | join("/") | if . == "" then "." else . end)),
-                target: $target,
-                build_args: (.["build-args"] // {} | to_entries | map("\(.key)=\(.value)") | join("\n")),
-                label: ($df + (if $target == "" then "" else " (\($target))" end)),
-                suffix: ($df + (if $target == "" then "" else "-\($target)" end) | gsub("[/.]"; "-"))
-              }
-            )' <<<"${list}")
-
-          # 3. マニフェストの記載ミスは、ビルドを待たずにここで落とす
-          while IFS= read -r f; do
-            if [ -z "${f}" ] || [ ! -f "${f}" ]; then
-              echo "::error::${manifest} の images[].dockerfile が未指定か、ファイルが存在しません: '${f}'"
-              exit 1
-            fi
-          done < <(jq --raw-output '.[].dockerfile' <<<"${images}")
-
-          echo "images=${images}" >> "$GITHUB_OUTPUT"
-          echo "スキャン対象: ${images}"
+        # 必須ワークフローは対象 repo で動くため、この repo の action はパスではなく SHA で参照する
+        uses: theindiehacker/devops/.github/actions/trivy-images@5f6644248b7a1985342bfddc326d9665d417eada
 
   scan-fs:
     name: "依存パッケージ / IaC をスキャン"
