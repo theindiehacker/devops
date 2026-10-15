@@ -432,6 +432,7 @@ docker/build-push-action@*,
 dorny/paths-filter@*,
 google-github-actions/auth@*,
 hashicorp/setup-terraform@*,
+jdx/mise-action@*,
 oven-sh/setup-bun@*,
 renovatebot/github-action@*,
 terraform-linters/setup-tflint@*
@@ -441,7 +442,8 @@ terraform-linters/setup-tflint@*
 ※ `oven-sh/setup-bun` は `anthropics/claude-code-action` が内部で使用する action のため併せて許可する(「4.」)。<br/>
 ※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `python.yml` が使用する。<br/>
 ※ `hashicorp/setup-terraform` は `terraform.yml` / `terraform-fmt.yml`、`terraform-linters/setup-tflint` は `tflint.yml` が使用する(「2.」の必須ワークフロー)。<br/>
-※ `google-github-actions/auth` は Workload Identity 連携で Google Cloud に認証する公式 action(各リポジトリの Terraform plan / apply が使用する)。
+※ `google-github-actions/auth` は Workload Identity 連携で Google Cloud に認証する公式 action(各リポジトリの Terraform plan / apply が使用する)。<br/>
+※ `jdx/mise-action` は app.fastship.jp の CI(`py-check.yml` / `py-test.yml`)が、`mise.toml`・`mise.lock` の版で task・uv などを入れるために使用する(組織の必須ワークフローが効かない個人ユーザーのリポジトリでも CI を動かすため)。
 
 </details>
 
