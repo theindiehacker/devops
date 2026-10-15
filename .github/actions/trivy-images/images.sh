@@ -2,17 +2,63 @@
 # trivy.yml の scan-image でビルドしてスキャンするイメージを決め、matrix に渡す JSON 配列を出力 images に書く。
 #   - .github/trivy-image.yml があれば、列挙された image だけをビルドする
 #   - 無ければ Dockerfile / Dockerfile.* / *.Dockerfile を自動検出し、置き場所を build context に、
-#     最終ステージ (ほかのステージから FROM・COPY --from・RUN --mount の from= で使われないステージ) をすべて target にする
+#     最終ステージ (ほかのステージから FROM・COPY --from・RUN --mount の from= で使われないステージ) をすべて target にする。
+#     最後のステージ (ビルドの既定) は、参照の解釈によらず必ず含める
 set -euo pipefail
 
+# Dockerfile の COPY・ADD の --from= と、RUN の --mount の from= に書かれた参照 (ステージ名か番号) を 1 行に 1 つ出す。
+# 命令の引数の文字列 (RUN echo --from=api など) を参照と取り違えないよう、BuildKit と同じく
+# パーサーディレクティブの escape・コメント行・継続行・ヒアドキュメントを解釈し、命令の先頭のフラグだけを見る
+from_refs() {
+  local escape="\\" directives=true instruction="" line end word words continuation heredocs=()
+  while IFS= read -r line || [ -n "${line}" ]; do
+    # ヒアドキュメントの中身は命令ではない。終わりの行まで読み飛ばす (<<- は終わりの行の先頭のタブを無視する)
+    if [ "${#heredocs[@]}" -gt 0 ]; then
+      end=${heredocs[0]}
+      if [ "${end:0:1}" = "-" ]; then end=${end:1}; line=${line#"${line%%[!$'\t']*}"}; fi
+      if [ "${line}" = "${end}" ]; then heredocs=("${heredocs[@]:1}"); fi
+      continue
+    fi
+    # パーサーディレクティブは先頭の「# key=value」の行だけ。escape で継続行の記号が変わる
+    if ${directives} && [[ ${line} =~ ^#[[:space:]]*([A-Za-z]+)[[:space:]]*=[[:space:]]*([^[:space:]]*) ]]; then
+      if [ "${BASH_REMATCH[1],,}" = escape ]; then escape=${BASH_REMATCH[2]:0:1}; fi
+      continue
+    fi
+    directives=false
+    # コメント行と空行 (継続行の途中も含む) は、BuildKit と同じく命令に含めない
+    if [[ ${line} =~ ^[[:space:]]*(#|$) ]]; then continue; fi
+    continuation="[${escape}][[:space:]]*\$"
+    if [[ ${line} =~ ${continuation} ]]; then
+      instruction+="${line%"${escape}"*} "
+      continue
+    fi
+    instruction+=${line}
+    read -ra words <<<"${instruction}"
+    instruction=""
+    case "${words[0]^^}" in COPY | ADD | RUN) ;; *) continue ;; esac
+    for word in "${words[@]:1}"; do
+      [ "${word:0:2}" = "--" ] || break
+      case "${word,,}" in
+        --from=*) echo "${word#*=}" ;;
+        --mount=*) tr ',' '\n' <<<"${word#*=}" | sed -n 's/^from=//p' ;;
+      esac
+    done
+    # この命令が始めるヒアドキュメント (<<EOF・<<-EOF・<<"EOF" など。1 つの命令に複数書ける)
+    line="${words[*]}"
+    while [[ ${line} =~ \<\<(-?)[\"\']?([A-Za-z0-9_]+)[\"\']?(.*) ]]; do
+      heredocs+=("${BASH_REMATCH[1]}${BASH_REMATCH[2]}")
+      line=${BASH_REMATCH[3]}
+    done
+  done <"$1"
+}
+
 # Dockerfile の最終ステージを {dockerfile, target} の JSON 配列で出す。
-# ステージと FROM の参照元は buildx の --call=targets で取る。COPY --from・RUN --mount の from= の参照は buildx の出力に無いため、
-# Dockerfile から拾って足す (参照はステージ名か番号。外部イメージの参照はどのステージにも当たらない)。
-# 最終ステージが最後のステージ 1 つだけなら、target を付けない (ビルドの既定と同じで、job 名も変わらない)
+# ステージと FROM の参照元は buildx の --call=targets で取り、buildx の出力に無い --from= の参照は from_refs で足す
+# (参照はステージ名か番号。外部イメージの参照はどのステージにも当たらない)。
+# 最終ステージが最後のステージだけなら、target を付けない (ビルドの既定と同じで、job 名も変わらない)
 final_stages() {
   local dockerfile=$1 refs targets
-  refs=$({ grep -v -E '^[[:space:]]*#' "${dockerfile}" | grep -o -i -E '(--from|[[:space:],]from)=[A-Za-z0-9_.-]+' || true; } \
-    | sed 's/.*=//' | tr '[:upper:]' '[:lower:]' | jq --raw-input . | jq --slurp --compact-output .)
+  refs=$(from_refs "${dockerfile}" | tr '[:upper:]' '[:lower:]' | jq --raw-input . | jq --slurp --compact-output .)
   # 解析できない Dockerfile は target を付けずに入れ、ビルドのエラーをその image の scan-image に出す
   if ! targets=$(docker buildx build --call=targets,format=json --progress=quiet --file "${dockerfile}" "$(dirname "${dockerfile}")"); then
     echo "${dockerfile}: ステージを解析できないため、target を付けずにビルドする" >&2
@@ -22,12 +68,12 @@ final_stages() {
   jq --compact-output --arg df "${dockerfile}" --argjson refs "${refs}" '
     ([.targets[].base | ascii_downcase] + $refs) as $used
     | [.targets | to_entries[]
-        | {id: (.key | tostring), name: (.value.name | if . then ascii_downcase else . end), default: (.value.default // false)}
-        # 名前でも番号でも参照されていないステージが最終ステージ
-        | select(([.name, .id] - $used | length) == 2)] as $leaves
-    | if ($leaves | length) == 1 and $leaves[0].default then [{dockerfile: $df}]
-      # 名前のないステージは --target で選べない。最後のステージだけは target なしでビルドできる
-      else [$leaves[] | select(.name != null or .default) | {dockerfile: $df, target: (.name // "")}] end
+        | {id: (.key | tostring), name: (.value.name | if . then ascii_downcase else . end), default: (.value.default // false)}] as $stages
+    # 名前でも番号でも参照されていないステージが最終ステージ。名前のないステージは --target で選べないので除く
+    | [$stages[] | select(.default | not) | select(.name != null) | select(([.name, .id] - $used | length) == 2)] as $others
+    # 最後のステージは、参照されていると読めても必ず入れる (Dockerfile がスキャンから丸ごと外れないようにする)
+    | if ($others | length) == 0 then [{dockerfile: $df}]
+      else [$others[] | {dockerfile: $df, target: .name}] + [{dockerfile: $df, target: ($stages[-1].name // "")}] end
   ' <<<"${targets}"
 }
 
