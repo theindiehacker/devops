@@ -4,7 +4,7 @@ name: "🛡️ Trivy スキャン"
 #   - scan-fs:    依存パッケージの脆弱性と IaC の設定ミス
 #   - scan-image: Dockerfile からビルドしたイメージの脆弱性（Dockerfile が無い repo では skip）
 #
-# 検知ポリシー（HIGH 以上 / 修正版がある脆弱性のみ / 検知したら失敗）はここで固定する。
+# 検知ポリシー（MEDIUM 以上 / 修正版がある脆弱性のみ / 検知したら失敗）はここで固定する。
 # repo 側は trivy.yaml の severity で検知を「増やす」ことだけができる。
 # 抑制は承認必須の .trivyignore / .trivyignore.yaml だけで行い、インライン ignore は禁止する。
 #
@@ -59,12 +59,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          # --- severity: 組織の下限 HIGH,CRITICAL に repo の trivy.yaml の指定を足す ---
+          # --- severity: 組織の下限 MEDIUM,HIGH,CRITICAL に repo の trivy.yaml の指定を足す ---
           # （CLI 引数は設定ファイルより優先されるため、repo 側から下限を弱めることはできない）
-          levels=(CRITICAL HIGH)
+          levels=(CRITICAL HIGH MEDIUM)
           for cfg in trivy.yaml trivy.yml; do
             [ -f "${cfg}" ] || continue
-            # severity は "HIGH,MEDIUM" 形式の文字列でも配列でも書ける。
+            # severity は "LOW,UNKNOWN" 形式の文字列でも配列でも書ける。
             # 一度変数に受けるのは、yq / jq の失敗を set -e で拾うため
             raw=$(yq --output-format=json '.severity // []' "${cfg}" \
               | jq -r '[.] | flatten | map(tostring) | join(",") | ascii_upcase | gsub(" "; "")')
