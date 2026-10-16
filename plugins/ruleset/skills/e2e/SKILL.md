@@ -22,8 +22,8 @@ user-invocable: false
 - 非同期経路 (検証メール配送 / テナント作成 = Pub/Sub) は `expect.poll` / `expect(...).toPass` で待つ。`waitForTimeout` の固定 sleep は禁止
 - セレクタは `getByRole` / `getByLabel` / `getByText` を優先し、`data-testid` はテキストを持たない要素 (例: アバターボタン) に限る
   - `getByRole("alert")` は Next.js の `__next-route-announcer__` (role=alert) にも一致するため、エラー文言は `getByText` で絞る
-- メール検証は #411 の Tokens VO 修正で**逐次**の二重サブミット / リトライは同じトークンに収束するようになった。ただし「有効トークンが 0 の状態への**真に並行な**再要求」では両者が別トークンを発行し片方が last-writer-wins で消える窓が残る (backend `User.request_email_verification` の docstring 参照。根治は FOR UPDATE / 種別ごと部分 unique が候補で backend の follow-up)。この窓が閉じるまで、ヘルパー `registerAndVerify` は届いた検証メールのトークンを newest-first で順に踏んで有効な 1 つを採用する自己修復を維持する (CI 実測で 8 register→9 token / verify 401 の残存フレークを確認済み)
-- #439 (password-reset の flaky 401) の根因は**メール plain text パートの行折り返しによるトークン切断**だった: html2text の既定 (78 桁折り返し) は「ハイフン直後が英字」のときだけ折り返すため、ランダムな UUID の字種次第でトークン途中に改行が入り、正規表現が途中で切れた無効リンクを拾って consume が 401 になり続ける (二重発行・TTL・ポーリング不足のいずれでもない)。根治は backend の `to_plain_text` (bodywidth=0) と mailpit ヘルパーの改行復元 (`unwrapLines`) の 2 層。メール本文からリンクを抽出する新ヘルパーは必ず `unwrapLines` 経由にする。切り分け用に backend `DriverManagerUser.find_by_token` がミス時に「行は存在するが join 不可視」を WARN で出す (WARN なしのミス = 行自体が無い)
+- 並行した再要求で検証トークン等が複数発行されうる経路では、届いたメールのトークンを新しい順に試して有効な 1 つを採用するヘルパーにする (最初の 1 通に決め打ちしない)。有効なトークンが無い状態への真に並行な再要求では、別々のトークンが発行されて片方が後勝ちで消えることがあり、決め打ちすると 401 のフレークになる
+- メール plain text パートからリンク／トークンを抜くときは、行の折り返しを復元してから正規表現にかける。html2text 等の既定の折り返し (78 桁) はトークンの途中に改行を入れることがあり、途中で切れた無効なリンクを拾って 401 になり続けるフレークの原因になる。メールからリンクを抜くヘルパーは必ず折り返しの復元を通す (送信側も plain text を折り返さない設定にしておく)
 
 ## 実行
 
