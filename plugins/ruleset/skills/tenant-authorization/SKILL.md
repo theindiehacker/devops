@@ -29,7 +29,19 @@ user-invocable: false
   `GetCurrentApp` で読む。**user 認証トークン (`x-internal-token`) / management トークンには App ペイロードを
   載せない**（実行主体ごとに credential を分ける。混載は ACL 翻訳の設計を崩す）。App 内部トークンは
   `ResolveAppMiddleware` が全リクエスト（匿名含む）で発行する **ACL 翻訳済みの公開スキーマ・スナップショット**
-  で、正（クレーム契約）は `AppToken.generate()`（`backend/src/apigateway/domain/model/token/internal/internal_token.py`）とそのユニットテスト。
+  で、正（クレーム契約）は `AppToken.generate()` とそのユニットテスト。`app` クレームの形は次のとおり（抜粋）:
+  ```python
+  Name.APP.make({
+      "id": from_.id.slug,
+      "name": from_.name,
+      "mode": from_.mode,
+      "owner_tenant_id": from_.owner_tenant_id,
+      "pool_id": from_.user_pool_id.value,
+      "front_base_url": from_.front_base_url,
+      "issuer": from_.issuer,
+      "mcp_base_url": from_.mcp_base_url,
+  }),
+  ```
 - 「App **設定**（デザイントークン等の可変長・非スナップショット項目）が欲しい」は各コンテキストの ACL
   (`AppDatabaseService` 系) 経由で読む（可変長設定はトークンに載せない。理由: ヘッダサイズを有界に保つ +
   コンテキストごとに翻訳する）。`mode` 等の固定値スナップショットは `app` クレーム（`AppToken`）に載せてよい。
@@ -39,8 +51,9 @@ user-invocable: false
 置き場所を変えても安全性は上がらない ― パス・サブドメイン・ヘッダのどれもクライアントが
 書き換えられる入力で、防御は「受け取った後の検証」に閉じる（BOLA/IDOR 対策）。加えて:
 
- - **サブドメイン**: サブドメインは AppId 解決に既に使用（`{AppId}.api.example.com`）。テナントを
-   足すとサブサブドメインになり、ワイルドカード証明書 1 ラベル制約で不可（`CLAUDE.md` 確定方針）。
+ - **サブドメイン**: サブドメインは AppId 解決に既に使用（`{AppId}.api.example.com`）。可変ラベルの AppId を
+   常に先頭に置き、サービスごとに 1 段のワイルドカード証明書で全 App を賄う方針のため、テナントを足すと
+   サブサブドメインになり、ワイルドカード証明書が 1 ラベルしか覆えない制約で不可。
    App テナントは実行時に無制限に増えるため DNS/証明書運用も成立しない。
  - **ヘッダ**: 得るものが無く、キャッシュ汚染・ログ/監査でのテナント不可視・生成クライアントの
    指定漏れを招く。業界標準（GitHub `/orgs/{org}` / GCP / Auth0）もパス方式。
@@ -64,5 +77,4 @@ user-invocable: false
 テナント間隔離は**アプリ層の認可境界**（同一 App DB 内の全テナントは同じ契約企業の App データ）。
 DB の RLS 境界は `pool_id`（App データ）/ `owner_tenant_id`（Control）で、`tenant_id` 単位の RLS は
 **張らない**（トークン発行は 1 ユーザーの全テナントのメンバーシップを横断読みし、`GET /tenants` も
-横断参照するため、`tenant_id` を GUC で絞ると正当な横断読みが壊れる。既存 `enable_rls_app_isolation`
-マイグレーションの除外理由と同じ）。
+横断参照するため、`tenant_id` を GUC で絞ると正当な横断読みが壊れる）。

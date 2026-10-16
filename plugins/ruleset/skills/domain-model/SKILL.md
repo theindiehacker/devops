@@ -28,4 +28,4 @@ user-invocable: false
 
  - 集約/VO がプロパティ（ゲッター/セッター）だけで**振る舞いメソッドが無い**。
  - **アプリケーションサービスにプライベートメソッドがある / メソッドが 50 行を超える**（`ruleset:application-service` skill）。その手続きは集約メソッドに引き上げる。
- - application サービスが集約フィールドを直接組み立てて不変条件を作っている（集約メソッド化する。実例の強い形は `user.py` の `reset_password` / `verified` / `unlink`）。
+ - application サービスが集約フィールドを直接組み立てて不変条件を作っている（集約メソッド化する。実例の強い形は `ruleset:aggregate` skill の規範例 `User.reset_password` / `User.verified` / `User.unlink`）。
