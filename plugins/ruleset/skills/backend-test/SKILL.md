@@ -151,28 +151,135 @@ class AppAdapterStub(AppAdapter):
         return self.__max_apps
 ```
 
-例:
- - backend/src/authority/port/adapter/service/app/app_database_service_impl.py
- - backend/src/authority/port/adapter/service/app/adapter/stub.py
- - backend/test/unit/authority/application/identity/test_identity_application_service.py
+例: プロダクションコードの `AppAdapterStub`（`ruleset:domain-service` skill の規範例）を `AppDatabaseServiceImpl` に注入し、テストが触らない依存は Pytest の Mock で埋める。
+
+```python
+class TestIdentityApplicationService:
+    class Test_signup_fieldsメソッドについて:
+        def setup_method(self) -> None:
+            self.app_adapter_stub = AppAdapterStub()
+            self.identity_application_service = IdentityApplicationService(
+                oauth_provider_service=Mock(),
+                user_repository=Mock(),
+                token_repository=Mock(),
+                app_database_service=AppDatabaseServiceImpl(self.app_adapter_stub),
+                pool_settings_repository=InMemPoolSettingsRepository(),
+            )
+
+        def test_App設定の追加入力フィールドを返す(self) -> None:
+            self.app_adapter_stub.apps.add(App(
+                id=AppId("acme"),
+                additional_signup_fields=(TextSignupField("company_name", required=False),),
+                front_base_url="https://acme.example.com",
+                issuer="https://acme.api.example.com",
+            ))
+
+            with CurrentApp.bind_with(AppId("acme"), PoolId.generate()):
+                dpo = self.identity_application_service.signup_fields()
+
+            assert dpo.fields == (TextSignupField("company_name", required=False),)
+
+        def test_追加入力フィールドが無いAppでは空を返す(self) -> None:
+            self.app_adapter_stub.apps.add(App(
+                id=AppId("shop"),
+                additional_signup_fields=(),
+                front_base_url="https://shop.example.com",
+                issuer="https://shop.api.example.com",
+            ))
+
+            with CurrentApp.bind_with(AppId("shop"), PoolId.generate()):
+                dpo = self.identity_application_service.signup_fields()
+
+            assert dpo.fields == ()
+```
 
 ---
 ## 🔗 実装例
 ### ユニットテスト(UT)
 
-**アプリケーション層**:
- - backend/test/unit/app/application/app/test_app_application_service.py
- - backend/test/unit/tenant/application/project/test_project_application_service.py
+**アプリケーション層**: 上の「ドメインサービスのスタブはテストコードでは定義しない」の例（`TestIdentityApplicationService`）
 
-**ドメイン層**:
- - backend/test/unit/tenant/domain/model/tenant/test_tenant.py
- - backend/test/unit/tenant/domain/model/user/test_user_id.py
- - backend/test/unit/common/domain/model/mail/test_email_address.py
+**ドメイン層**: 値オブジェクトの生成と検証
 
-**ポート・アダプター層**:
- - backend/test/unit/authority/port/adapter/persistence/repository/postgresql/user/test_driver_manager_user.py
+```python
+class TestEmailAddress:
+    class Test_生成について:
+        def test_妥当なメールアドレスは構築できる(self) -> None:
+            assert EmailAddress("test@example.com").text == "test@example.com"
+
+        def test_domainプロパティはアットマーク以降を返す(self) -> None:
+            assert EmailAddress("user@example.co.jp").domain == "example.co.jp"
+
+        @pytest.mark.parametrize("value", [None, ""])
+        def test_空文字やNoneはValueErrorを送出する(self, value: str | None) -> None:
+            with pytest.raises(ValueError, match="must not be empty"):
+                EmailAddress(value)  # type: ignore[arg-type]
+
+        def test_長すぎるとValueErrorを送出する(self) -> None:
+            with pytest.raises(ValueError, match="must be at most 100 characters"):
+                EmailAddress("a" * 95 + "@example.com")  # 107 文字 (上限 100 超過)
+
+        @pytest.mark.parametrize("value", [
+            "not-an-email",            # @ がない
+            "@example.com",            # local part がない
+            "test@",                   # domain がない
+            "test@example",            # domain に . がない
+            "test@example.com\n",      # 末尾改行
+            "test@example.com extra",  # 余剰文字
+        ])
+        def test_不正な形式はValueErrorを送出する(self, value: str) -> None:
+            with pytest.raises(ValueError, match="is invalid"):
+                EmailAddress(value)
+```
+
+**ポート・アダプター層**: 実 DB に対する DriverManager のテスト（境界キーの強制も仕様として書く）
+
+```python
+class TestDriverManagerUser:
+    class Test_find_by_tokenメソッドについて:
+        def test_トークンは所属Poolを指定したときだけ取得できる(self, unit_of_work: UnitOfWork) -> None:
+            token = Token.Type.VERIFICATION.generate()
+            user = User(UserId(str(uuid.uuid4())), PoolId.system(),
+                        'test1', None, EmailAddress(f'{uuid.uuid4()}@example.com'),
+                        None, Tokens(frozenset({token})), False, set(), None)
+
+            driver_manager_user = DIContainer.instance().resolve(DriverManagerUser)
+
+            unit_of_work.start()
+            driver_manager_user.insert(user)
+            unit_of_work.commit()
+
+            # 所属 Pool と種別を指定すれば取得できる
+            assert driver_manager_user.find_by_token(PoolId.system(), Token.Type.VERIFICATION, token.value) == user
+            # 別 Pool を指定すると存在しない扱いになる (Pool 境界の強制)
+            assert driver_manager_user.find_by_token(PoolId.generate(), Token.Type.VERIFICATION, token.value) is None
+            # 別種別を指定すると存在しない扱いになる (種別境界の強制)
+            assert driver_manager_user.find_by_token(PoolId.system(), Token.Type.PASSWORD_RESET, token.value) is None
+```
 
 #### 受け入れテスト
 
- - backend/test/acceptance/apigateway/test_ヘルスチェックAPI.py
- - backend/test/acceptance/authority/test_ユーザー登録API.py
+API を叩き、結果を DB から確かめる。テストデータは uuid で一意にして他テストと衝突させない。
+
+```python
+class Test_ユーザー登録API:
+    def test_ユーザー名とメールアドレスとパスワード指定でユーザー登録できる(
+        self, client: TestClient, unit_of_work: PostgreSQLUnitOfWork
+    ) -> None:
+        email_address = f'{uuid.uuid4()}@example.com'
+        r: Response = client.post('/users/register', json={
+            'username': f'user_{uuid.uuid4().hex[:8]}',
+            'email_address': email_address,
+            'password': 'password'
+        })
+        assert r.status_code == 200
+
+        # テストは system プレーン (CurrentApp(system)) で動くため system Pool に登録される。
+        with unit_of_work.query() as q:
+            optional: UsersTableRow | None = q.query(UsersTableRow) \
+                .filter_by(pool_id=PoolId.system().value, email_address=email_address) \
+                .one_or_none()
+
+        assert optional.email_address == email_address
+        assert optional.pool_id == PoolId.system().value
+```
