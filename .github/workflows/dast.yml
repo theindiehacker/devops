@@ -59,7 +59,7 @@ jobs:
       - name: "DAST"
         if: steps.config.outputs.file != ''
         # 必須ワークフローは対象 repo で動くため、この repo の action はパスではなく SHA で参照する
-        uses: theindiehacker/devops/.github/actions/dast@76f6561aadc5457890dddf1011eff46b333822d4
+        uses: theindiehacker/devops/.github/actions/dast@5e258ec39c03c69fa6a2e6fb68e45bfcf1550626
         with:
           config: ${{ steps.config.outputs.file }}
           zap-image: ${{ env.ZAP_IMAGE }}
