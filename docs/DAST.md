@@ -144,6 +144,7 @@ flowchart LR
 
 - `.github/dast.yml` を「✔️ セキュリティ設定変更の承認必須化」の File patterns に足す（削除すると DAST が skip されるため）
 - 合否は ZAP の JSON レポートで判定する。ZAP の `exitStatus`（`errorLevel`）は、一部の URL だけ抑制したアラートを見逃すため使わない
+- HTTP Only Site（10106）は全 repo で止める。スキャン先は http://localhost に限るため必ず検知される（本番の TLS はロードバランサーが担う）
 - ZAP にはインラインの抑制コメントが無いため、Trivy / Semgrep のような禁止処理は要らない
 
 ## 5. 🔧 変更するファイル
