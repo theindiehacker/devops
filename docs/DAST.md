@@ -1,7 +1,8 @@
 # 🕷️ DAST（動的アプリケーションセキュリティテスト）要件定義・設計
 
-> 📝 ステータス: **設計レビュー中**（実装は未着手）<br/>
-> 対象: devops（仕組み）・app.fastship.jp（最初の導入先）
+> 📝 ステータス: **Phase 1（PR スキャン）実装済み**。Phase 2・3 は未着手<br/>
+> 対象: devops（仕組み）・app.fastship.jp（最初の導入先）<br/>
+> 実装: [`.github/workflows/dast.yml`](../.github/workflows/dast.yml)・[`.github/actions/dast`](../.github/actions/dast)・ルールセットは [SETUP.md](./SETUP.md) の「🕷️ DAST」
 
 ## 1. 🎯 目的
 起動したアプリに攻撃リクエストを送り、コードを読むだけでは見つからない脆弱性をマージ前に見つける。
@@ -58,11 +59,11 @@ DAST でしか見つからない例: レスポンスヘッダー・Cookie 属性
 | Nuclei | ⏸️ Phase 3 | 既知 CVE・設定ミスの検知が得意。アプリ固有の入力の脆弱性は見ない |
 | StackHawk / Burp Suite DAST | ❌ | 有償。StackHawk は中身が ZAP |
 
-ZAP は公式イメージ（`ghcr.io/zaproxy/zaproxy:stable`）を digest 固定で直接実行する。公式 action（`action-baseline` / `action-api-scan` / `action-full-scan`）はスキャン種別ごとに分かれ、既定で Issue を書く（`issues: write` が要る）ため、PR の必須ワークフローでは使わない。
+ZAP は公式イメージ（`ghcr.io/zaproxy/zaproxy`）を digest 固定で直接実行する。公式 action（`action-baseline` / `action-api-scan` / `action-full-scan`）はスキャン種別ごとに分かれ、既定で Issue を書く（`issues: write` が要る）ため、PR の必須ワークフローでは使わない。
 
 ## 4. 🏗️ 設計
 ### 4.1 全体像
-Trivy などと同じく、devops の**必須ワークフロー**で全 repo に強制する。必須ワークフローは inputs を受け取れないため、起動方法とスキャン対象は repo の `.github/dast.yml` で渡す（Trivy の `.github/trivy-image.yml` と同じ方式）。
+Trivy などと同じく、devops の**必須ワークフロー**で全 repo に強制する。必須ワークフローは inputs を受け取れないため、起動方法とスキャン対象は repo の `.github/dast.yml` で渡す（Trivy の `.github/trivy-image.yml` と同じ方式）。paths のフィルタは無く、`.github/dast.yml` がある repo では全 PR でスキャンする。
 
 ```mermaid
 flowchart LR
@@ -82,11 +83,13 @@ flowchart LR
 | | PR（必須ワークフロー） | 週次（main） |
 |:--|:--|:--|
 | 🖥️ 画面（`type: web`） | クロール（1 分）＋受動スキャン | ＋ JS 実行込みのクロール（AJAX Spider）＋能動スキャン |
-| 🔌 API（`type: api`） | OpenAPI から全エンドポイントを能動スキャン（10 分上限） | 同じ（30 分上限） |
+| 🔌 API（`type: api`） | OpenAPI から全エンドポイントを能動スキャン（8 分上限。ZAP 全体は 13 分で打ち切り） | 同じ（30 分上限） |
 | 🚦 判定 | Medium 以上で失敗 | Medium 以上で Issue を起票 |
 | 🧩 実装 | `.github/workflows/dast.yml` | `.github/workflows/dast-weekly.yml`（reusable） |
 
 どちらも共通の composite action（`.github/actions/dast`）で「アプリ起動 → URL の応答待ち → ZAP 実行 → レポート保存」を行う。
+
+app.fastship.jp では、ビルド済みのイメージで 1 回のスキャンが約 70 秒（ローカルで計測）。
 
 ### 4.3 repo 側の設定（app.fastship.jp の例）
 `.github/dast.yml`
@@ -102,10 +105,15 @@ targets:
     openapi: /openapi.json
 # 抑制（security チームの承認が要る）
 ignores:
-  - rule: 10055                # CSP
-    url: ^http://localhost:3000/
-    reason: next.config.ts のとおり、静的シェルを使うため script-src に 'unsafe-inline' を許す
+  - rule: "10055-5"            # CSP: script-src unsafe-inline（alertRef でサブアラート単位に絞る）
+    url: http://localhost:3000(/.*)?  # URL 全体に一致させる正規表現
+    reason: Next.js の静的シェルを使うため、インラインの <script> を許している (next.config.ts)
+  - rule: "10055-6"            # CSP: style-src unsafe-inline
+    url: http://localhost:3000(/.*)?
+    reason: Next.js の静的シェルを使うため、インラインの <style> を許している (next.config.ts)
 ```
+
+`url` は `http://localhost` / `http://127.0.0.1` の origin だけを書ける（PR からデプロイ済みの環境を攻撃させないための設定ミスの防止）。
 
 `compose.yaml` に追記（`dast` プロファイルなので `task dev:up` には影響しない）
 
@@ -134,7 +142,9 @@ flowchart LR
   ign --> sec["👥 security チームが承認"]
 ```
 
-- `.github/dast.yml` を「✔️ セキュリティ設定変更の承認必須化」の File patterns に足す。削除による opt-out も承認が要る
+- `.github/dast.yml` を「✔️ セキュリティ設定変更の承認必須化」の File patterns に足す（削除すると DAST が skip されるため）
+- 合否は ZAP の JSON レポートで判定する。ZAP の `exitStatus`（`errorLevel`）は、一部の URL だけ抑制したアラートを見逃すため使わない
+- HTTP Only Site（10106）は全 repo で止める。スキャン先は http://localhost に限るため必ず検知される（本番の TLS はロードバランサーが担う）
 - ZAP にはインラインの抑制コメントが無いため、Trivy / Semgrep のような禁止処理は要らない
 
 ## 5. 🔧 変更するファイル
@@ -159,10 +169,10 @@ flowchart LR
 - Phase 1 では、ルールセットの Target repositories を app.fastship.jp だけにして始める。初回の検知が片付いてから All repositories に広げ、ほかの repo の PR を止めない
 - Phase 3 の認証付きスキャンは、ログイン機能の実装後に、テスト用ユーザーのトークンを ZAP のリクエストヘッダーに付けて行う
 
-## 7. ❓ 決めてほしいこと
+## 7. ✅ 決定事項
 
-| # | 論点 | 推奨 |
+| # | 論点 | 決定 |
 |:--:|:--|:--|
 | 1 | 失敗させる下限 | **Medium 以上**（Trivy と同じ） |
-| 2 | CSP の `'unsafe-inline'`（Medium で検知される見込み） | **理由付きで抑制**。nonce にすると全ページが動的レンダリングになり、`cacheComponents` の静的シェルが使えない |
+| 2 | CSP の `'unsafe-inline'`（Medium で検知されることを確認済み） | **理由付きで抑制**。nonce にすると全ページが動的レンダリングになり、`cacheComponents` の静的シェルが使えない |
 | 3 | Phase 3 の STG スキャン | **受動スキャンのみ**で実施。STG の URL とアクセス制御（IAP など）を terraform-modules 側で確認してから着手 |
