@@ -1,0 +1,43 @@
+name: "DAST (ZAP) でスキャン"
+description: >-
+  repo の .github/dast.yml に従ってアプリを docker compose で起動し、ZAP の Automation Framework でスキャンする。
+  Medium 以上を検知したら失敗する。プランとレポートは work-dir に置く (レポートは work-dir/report)
+
+inputs:
+  config:
+    description: "スキャン対象を書いた設定ファイルのパス (書式は plan.sh を参照)"
+    required: true
+  zap-image:
+    description: "ZAP のイメージ (digest で固定する)"
+    required: true
+  work-dir:
+    description: "プランとレポートを置くディレクトリ (PR のファイルと混ざらないよう、checkout の外にする)"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: "ZAP のプランを作る"
+      id: plan
+      shell: bash
+      env:
+        CONFIG: ${{ inputs.config }}
+        WORK_DIR: ${{ inputs.work-dir }}
+      run: bash "${GITHUB_ACTION_PATH}/plan.sh"
+
+    - name: "アプリを起動して ZAP でスキャン"
+      shell: bash
+      env:
+        COMPOSE_PROFILES: ${{ steps.plan.outputs.profile }}
+        WAIT_URLS: ${{ steps.plan.outputs.wait_urls }}
+        WORK_DIR: ${{ inputs.work-dir }}
+        ZAP_IMAGE: ${{ inputs.zap-image }}
+      run: bash "${GITHUB_ACTION_PATH}/scan.sh"
+
+    # 起動に失敗した理由や、スキャン中のエラーを見る
+    - name: "アプリのログを表示"
+      if: failure() && steps.plan.outcome == 'success'
+      shell: bash
+      env:
+        COMPOSE_PROFILES: ${{ steps.plan.outputs.profile }}
+      run: docker compose logs
