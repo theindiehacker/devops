@@ -83,7 +83,7 @@ PR でセキュリティ検知された際はこのチームからの Approve �
 ## 2. 📚 Organization ルールセットを設定
 Organization ページ → Settings → Repository → Rulesets を選択し、以下のルールを設定して下さい。
 
-> ⚠️ **前提** : branch ruleset(2.1〜2.7)が保護するのは default branch のみ。リリースも default branch(main)のマージ済みコミットから行う運用を前提とする。
+> ⚠️ **前提** : branch ruleset(2.1〜2.8)が保護するのは default branch のみ。リリースも default branch(main)のマージ済みコミットから行う運用を前提とする。
 > タグやリリースブランチを起点にデプロイする運用を導入する場合は、レビューを経ないコミットからタグを切れてしまうため、別途 tag ruleset / 対象ブランチの追加が必要。
 > 本リポジトリのリリースタグ(`v*`)の tag ruleset は「5.」で設定する。
 
@@ -137,7 +137,7 @@ Rules セクションで以下のチェックを外す:
 | Allowed merge methods | `Merge` / `Squash` / `Rebase`(すべて許可) |
 
 ※ 承認が Required approvals にカウントされるのは write アクセス保持者のレビューのみ。PR 作成者本人による自己承認はできない。<br/>
-※ Renovate の更新 PR を承認なしで自動マージするため、Renovate 用 GitHub App を Bypass list に追加する。必須ワークフローのルールセット(2.3・2.4・2.7)には追加しないこと(失敗した検査を無視してマージされるようになる)
+※ Renovate の更新 PR を承認なしで自動マージするため、Renovate 用 GitHub App を Bypass list に追加する。必須ワークフローのルールセット(2.3・2.4・2.7・2.8)には追加しないこと(失敗した検査を無視してマージされるようになる)
 
 </details>
 
@@ -253,8 +253,11 @@ ghalint.yaml
 .ghalint.yaml
 .github/ghalint.yml
 .github/ghalint.yaml
+.github/dast.yml
+.github/dast.yaml
 ```
 
+※ `.github/dast.yml` は DAST(2.8)の抑制(`ignores`)とスキャン対象を書くファイル。削除すると DAST が skip されるため対象に含める<br/>
 ※ `trivy.yaml`(リポジトリ直下)は Trivy が自動読込する設定ファイルで、`ignorefile` / `ignore-policy` により抑制先を差し替えられるため対象に含める。レビュー時はこの 2 項目が上記対象外のファイルを指していないかを確認する<br/>
 ※ `**/.semgrepignore` は Semgrepignore v2(Semgrep 1.117 以降のデフォルト)でサブディレクトリの `.semgrepignore` も有効になるため対象に含める<br/>
 ※ zizmor の設定はワークフロー側(`.github/workflows/zizmor.yml` の `--config` / `--no-config`)で `.github/zizmor.yml` に固定しているため、自動探索され得る他パス(リポジトリ直下の `zizmor.yml` 等)の列挙は不要
@@ -264,7 +267,7 @@ ghalint.yaml
 <details><summary><b>「🛠️ 検知ワークフロー変更の承認必須化」</b></summary>
 
 > 必須ワークフローの実体(本リポジトリの `.github/workflows/`)を変更する PR にセキュリティチーム(`security`)の承認を必須化するルール。
-> 必須ワークフロー(2.3〜2.4・2.7)は本リポジトリの `main` 上の定義を参照しているため、検知を弱める変更(severity の引き下げ・`exit-code: 0` 化など)が通常の承認(2.2)だけで通ると org 全体の検知が無効化されてしまう
+> 必須ワークフロー(2.3〜2.4・2.7・2.8)は本リポジトリの `main` 上の定義を参照しているため、検知を弱める変更(severity の引き下げ・`exit-code: 0` 化など)が通常の承認(2.2)だけで通ると org 全体の検知が無効化されてしまう
 > Claude ワークフロー(`.github/workflows/claude*.yml`)も呼び出し側の全リポジトリで write 権限付きのプロンプトとして動くため、同じ File patterns(`.github/workflows/**`)で本ルールの対象になる
 
 | 設定項目 | 値                        |
@@ -367,6 +370,41 @@ Rules セクションで以下のチェックを外す:
 
 </details>
 
+<details><summary><b>「🕷️ DAST」</b></summary>
+
+> PR のコードからアプリを起動し、ZAP で攻撃してスキャンするルール(設計は [DAST.md](./DAST.md))。Medium 以上を検知したらマージできない。
+> 初回の検知を片付けるまで既存の PR を止めないよう、ほかのセキュリティ検知(2.4)とは別のルールセットにし、対象の repo を段階的に広げる
+
+| 設定項目 | 値 |
+|:-------:|:--|
+| Ruleset Name | `🕷️ DAST` |
+| Enforcement status | `Active` |
+| Bypass list | 空のまま |
+| Target repositories | `Select repositories` → `app.fastship.jp`(初回の検知を片付けた repo から足し、最終的に `All repositories`) |
+| Target branches | `Include default branch` |
+
+Rules セクションで以下のチェックを外す:
+
+- ⬜︎ **Restrict deletions**
+- ⬜︎ **Block force pushes**
+
+以下のチェックを入れる:
+
+- ✅ **Require workflows to pass before merging** — 「Add workflow」から以下を追加:
+
+| Repository | Branch | Workflow |
+|:-----------|:-------|:---------|
+| `devops` | `main` | `.github/workflows/dast.yml` |
+
+- ✅ **Do not require workflows on creation**
+
+> スキャンするのは `.github/dast.yml` がある repo だけ(無い repo では skip して成功する)。書式は `.github/actions/dast/plan.sh` を参照。<br/>
+> 「✏️ スタイルチェック」と同じく、必須ワークフローが対象 repo のコード(`docker compose` でビルド・起動するアプリ)を実行する。`permissions` は read のみで secrets を使わず、`pull_request` で動かす。<br/>
+> スキャン先を localhost に限る検査は設定ミスを防ぐためのもので、セキュリティの境界ではない(PR は `compose.yaml` も書き換えられる)。<br/>
+> Actions の許可リストの変更は要らない(ZAP は公式イメージを digest で固定して `docker run` する)。
+
+</details>
+
 
 ### `New push ruleset`
 
@@ -375,7 +413,7 @@ Rules セクションで以下のチェックを外す:
 秘密鍵や `.env` などの機密ファイルを、履歴に入る前にサーバー側で拒否する push ルールセット
 (Gitleaks は PR 時の検知のため、検知された時点で秘密情報はリモートの履歴に残っている)。
 ファイル内容に対するコミット前のローカル検知は各リポジトリの git hook(任意運用)が担う。
-2.1〜2.7 とは種類が異なり「**New push ruleset**」から作成する。
+2.1〜2.8 とは種類が異なり「**New push ruleset**」から作成する。
 
 | 設定項目 | 値 |
 |:-------:|:--|
