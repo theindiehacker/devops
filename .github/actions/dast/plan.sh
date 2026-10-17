@@ -67,7 +67,12 @@ jq --compact-output '
       + [$targets[] | select(.type == "api") | {type: "openapi", parameters: {context, apiUrl: .openapi_url, targetUrl: .url}}]
       + [$targets[] | select(.type == "web") | {type: "spider", parameters: {context, url, maxDuration: 1}}]
       + [{type: "passiveScan-wait", parameters: {maxDuration: 5}}]
-      + [$targets[] | select(.type == "api") | {type: "activeScan", parameters: {context, maxScanDurationInMins: 8}}]
+      # HTTP Only Site (10106) は止める。スキャン先は http://localhost に限るため必ず検知される (本番の TLS はロードバランサーが担う)
+      + [$targets[] | select(.type == "api") | {
+          type: "activeScan",
+          parameters: {context, maxScanDurationInMins: 8},
+          policyDefinition: {rules: [{id: 10106, threshold: "off"}]}
+        }]
       + [{type: "passiveScan-wait", parameters: {maxDuration: 5}}]
       + [
         report("traditional-html"; "zap-report.html"; null),
