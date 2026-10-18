@@ -4,7 +4,7 @@ name: "📦 バンドルサイズ"
 # なぜならページ表示速度が遅くなると、UX が悪化するからだ。
 #
 # PR とマージ先の両方をビルドし、JS・CSS の gzip 後のサイズの増減を PR にコメントする（preactjs/compressed-size-action）。
-# 報告だけで、サイズが増えてもマージは止めない。ビルドに失敗した場合も run は success にする。
+# 報告だけで、サイズが増えてもマージは止めない。計測できなかった場合は、その旨を PR にコメントし、run は success にする。
 #
 # ⚠️ 必須ワークフローは on: のフィルタ（paths / branches / types 等）が無視され全 PR で起動されるため、
 #    計測対象の判定は本ワークフロー内で行う。
@@ -13,6 +13,7 @@ name: "📦 バンドルサイズ"
 #   - package.json の依存に next / astro を持ち、同じディレクトリに bun.lock があるディレクトリ
 #     （bun.lock が無いと compressed-size-action は npm install を使うため、workspace の子などは計測しない）
 #   - PR がそのディレクトリ配下を変更していなければ、2 回のビルドを省くため計測しない
+#     （フロントエンドが repo のルートにあると、どのファイルを変えても計測する）
 #   - 計測対象が 0 件なら計測の job ごと skip し、run 全体は success になる
 #
 # 必須ワークフローの例外として、PR にコメントするため pull-requests: write を持つ（docs/SETUP.md「2.」）。
@@ -23,9 +24,10 @@ on:
 
 permissions: {}
 
-# 同じ PR に新しい push があれば、古い run をキャンセルする
+# 同じ PR に新しい push があれば、古い run をキャンセルする。
+# concurrency group は repo 内の全 workflow で共有されるため、各 repo の workflow と重ならないよう devops- を付ける
 concurrency:
-  group: bundle-size-${{ github.event.pull_request.number }}
+  group: devops-bundle-size-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -49,21 +51,24 @@ jobs:
         id: collect
         shell: bash
         env:
-          # package.json の依存から、計測するファイルとハッシュの伏せ方を決める（next / astro が無ければ対象外）
-          #   - Next.js: Turbopack のチャンク名はハッシュだけのため、ハッシュは伏せない（伏せると全ファイルが同じ名前になる）
-          #   - Astro: 名前.ハッシュ.js のハッシュを伏せ、ファイルごとの増減を追えるようにする
+          # package.json の依存から、計測するファイルを決める（next / astro が無ければ対象外）。
+          # ファイル名のハッシュは伏せない。Turbopack のチャンク名はハッシュだけで、Astro（Vite）は同じ名前のチャンクを
+          # 複数出すことがあり、伏せると別のファイルが同じ名前になって合計が合わなくなるため。
+          # key は compressed-size-action が前回のコメントを探す正規表現に埋め込むため、英数字と - _ だけにする
           FRAMEWORKS: |
             (.dependencies + .devDependencies) as $deps
-            | if $deps.next then {dir: $dir, pattern: ".next/static/chunks/**/*.{js,css}", strip_hash: ""}
-              elif $deps.astro then {dir: $dir, pattern: "dist/**/*.{js,css}", strip_hash: "\\.([\\w-]{8})\\.(?:js|css)$"}
+            | if $deps.next then ".next/static/chunks/**/*.{js,css}"
+              elif $deps.astro then "dist/**/*.{js,css}"
               else empty end
-        # git ls-files はコミットされたファイルだけを返すため、node_modules は対象にならない
+            | {dir: $dir, key: ($dir | gsub("[^A-Za-z0-9_-]"; "-")), pattern: .}
+        # git ls-files はコミットされたファイルだけを返すため、node_modules は対象にならない。
+        # JSON として読めない package.json は飛ばす（jq の失敗で detect が失敗し、マージを止めないようにする）
         run: |
           set -euo pipefail
-          targets=$(git ls-files ':(glob)**/package.json' | while IFS= read -r pkg; do
+          targets=$(git -c core.quotePath=false ls-files ':(glob)**/package.json' | while IFS= read -r pkg; do
             dir=$(dirname "${pkg}")
             if [ -e "${dir}/bun.lock" ] && ! git diff --quiet HEAD^1 HEAD -- "${dir}"; then
-              jq -c --arg dir "${dir}" "${FRAMEWORKS}" "${pkg}"
+              jq -c --arg dir "${dir}" "${FRAMEWORKS}" "${pkg}" || true
             fi
           done | jq -sc .)
           echo "targets=${targets}" | tee -a "${GITHUB_OUTPUT}"
@@ -74,7 +79,10 @@ jobs:
     # 空の matrix は job エラーになるため、対象 0 件なら skip する（skip は run の成功として扱われる）
     if: needs.detect.outputs.targets != '[]'
     runs-on: ubuntu-latest
-    timeout-minutes: 20  # PR とマージ先で 2 回ビルドする
+    # PR とマージ先で 2 回ビルドする（how-much.fun は 5,000 ページ超の静的生成があり、1 回に 9 分かかる）
+    timeout-minutes: 40
+    # 報告だけの計測のため、bun の取得の失敗やタイムアウトでもマージを止めない
+    continue-on-error: true
     permissions:
       contents: read
       pull-requests: write  # 増減を PR にコメントする
@@ -87,11 +95,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-          # マージ先のコミット（マージコミットの親）も取得しておく。
-          # 認証情報を残さないため、action の git fetch origin <ブランチ> は fatal で失敗し、git reset --hard <ブランチ> も
-          # fatal で失敗する（ログの 2 行の fatal は想定どおり）。action はそのあと、取得済みのマージ先のコミットに
-          # git reset --hard <SHA> で切り替えてビルドする
-          fetch-depth: 2
+          fetch-depth: 2  # マージ先のコミット（マージコミットの親）も取得する
+
+      # action はマージ先を git fetch origin <ブランチ>:<ブランチ> で取得し、git reset --hard <ブランチ> で切り替える。
+      # private repo では認証情報を残していないため fetch は fatal で失敗し（ログの fatal は想定どおり）、
+      # ここで作ったブランチ（detect と同じマージコミットの親）でビルドする。
+      # public repo では fetch が成功し、その時点の最新のマージ先と比べる
+      - name: "マージ先のブランチを作る"
+        shell: bash
+        run: git branch "${GITHUB_BASE_REF}" HEAD^1
 
       - name: "Install bun"
         shell: bash
@@ -101,25 +113,42 @@ jobs:
           SHA256: 3e730528d89775f03f87f05c06787c4df4099d0a37f3f252e7b829cb23816e18
         run: |
           set -euo pipefail
-          ARCHIVE="bun-linux-x64.zip"
-          curl -sSfL -o "$ARCHIVE" "https://github.com/oven-sh/bun/releases/download/${VERSION}/${ARCHIVE}"
-
-          # SHA-256 検証（改ざん・破損を検知）
-          echo "${SHA256}  ${ARCHIVE}" | sha256sum -c -
-
-          sudo unzip -o -j "$ARCHIVE" "bun-linux-x64/bun" -d /usr/local/bin
+          curl -sSfL -o bun.zip "https://github.com/oven-sh/bun/releases/download/${VERSION}/bun-linux-x64.zip"
+          echo "${SHA256}  bun.zip" | sha256sum -c -  # SHA-256 検証（改ざん・破損を検知）
+          sudo unzip -o -j bun.zip "bun-linux-x64/bun" -d /usr/local/bin
           sudo chmod +x /usr/local/bin/bun
-          rm -f "$ARCHIVE"
-          bun --version
+          rm -f bun.zip
 
       - name: "バンドルサイズを比較"
         id: compare
         # 報告だけの計測のため、ビルドの失敗などでマージを止めない
         continue-on-error: true
+        timeout-minutes: 35  # job の timeout より短くし、次の step でコメントできるようにする
         uses: preactjs/compressed-size-action@f322c295dde06a1cb7ccaef105732dd8a726d1d9  # 2.10.0
         with:
           cwd: ${{ matrix.dir }}
           pattern: ${{ matrix.pattern }}
-          strip-hash: ${{ matrix.strip_hash }}
           # フロントエンドが複数ある repo で、コメントをディレクトリごとに分ける
-          comment-key: ${{ matrix.dir }}
+          comment-key: ${{ matrix.key }}
+
+      - name: "計測できなかったことを PR にコメント"
+        # 前回のコメントの古い増減が、最新の結果として読まれないようにする
+        if: steps.compare.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          # compressed-size-action が前回のコメントを探す目印。BODY の末尾にも付け、次に計測できたらこのコメントが更新されるようにする
+          MARKER: "<sub>compressed-size-action::${{ matrix.key }}</sub>"
+          BODY: |
+            ⚠️ `${{ matrix.dir }}` のバンドルサイズを計測できませんでした（PR かマージ先のビルドの失敗など）。[ログ](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            <sub>compressed-size-action::${{ matrix.key }}</sub>
+        run: |
+          set -euo pipefail
+          id=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --jq '.[] | select(.body | contains(env.MARKER)) | .id' | tail -n 1)
+          if [ -n "${id}" ]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" -f body="${BODY}" > /dev/null
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -f body="${BODY}" > /dev/null
+          fi

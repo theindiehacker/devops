@@ -364,11 +364,13 @@ Rules セクションで以下のチェックを外す:
 9. tflint(`tflint.yml` の固定設定)の違反がある、または `.tf` に `tflint-ignore` コメントがある(違反は変更したディレクトリのみ検査するが、`tflint-ignore` の禁止は repo 全体が対象)
 10. registry.fastship.jp のモジュールを使っているのに、Organization の secret `REGISTRY_TOKEN` へのアクセスが許可されていない(`terraform init` が 401 で失敗する)
 
-`bundle-size.yml` は、サイズが増えてもビルドに失敗しても fail しないため、前提は無い。ただし次の場合は計測されない。
+`bundle-size.yml` は、サイズが増えても、ビルドの失敗やタイムアウト(40 分)でも fail しないため、前提は無い。ただし次の場合は計測されない、または一部だけが計測される。
 
 - PR がフロントエンドのディレクトリ配下を変更していない(2 回のビルドを省くため)
 - `package.json` と同じディレクトリに `bun.lock` が無い(workspace の子など)
-- ビルドに環境変数や secrets が要る(計測の step が失敗するだけで、run は success になる)
+- ビルドに環境変数や secrets が要る(PR に「計測できませんでした」とコメントされる)
+- Next.js を webpack でビルドしている(計測するのは Turbopack の出力先 `.next/static/chunks/` だけで、`.next/static/css/` の CSS は含まない)
+- Next.js の `distDir` を変えている(ファイルが見つからず、増減なしと出る)
 
 **例外運用** : ランナーで依存を導入できない repo(private index の認証が必要など)が出た場合だけ、その repo を `Bypass list` に追加するか、`Target repositories` を `Dynamic list by property` 等に変更して対象から外す。規約・lint・書式の検査も併せて外れる。
 
