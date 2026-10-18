@@ -494,7 +494,7 @@ git ls-remote https://github.com/theindiehacker/devops 'refs/tags/v1.0.0^{}' 're
 +    uses: theindiehacker/devops/.github/workflows/claude-code-review.yml@<SHA>  # v1.0.0
 ```
 
-3. main にマージ後、PR に `/code-review` とコメントしてレビューが投稿されることを確認する
+3. main にマージ後、PR を作るとコードレビューが自動で投稿されることを確認する (再レビューは PR に `/code-review` とコメントする)
 
 > 💡 本リポジトリは `github-workflows` から `devops` に改名した。旧名の `uses: theindiehacker/github-workflows/...` は GitHub のリダイレクトで当面動くが、リダイレクトに依存しないよう `theindiehacker/devops/...` に書き換える(旧名でリポジトリを作り直すと参照先が乗っ取られるため、旧名は再利用しない)。ruleset はリポジトリ名ではなく ID で紐付くため、改名後の再設定は不要
 
