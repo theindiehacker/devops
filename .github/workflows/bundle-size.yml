@@ -1,0 +1,125 @@
+name: "📦 バンドルサイズ"
+
+# フロントエンドのバンドルサイズを計測し、ページ表示速度が遅くなるのを防止する。
+# なぜならページ表示速度が遅くなると、UX が悪化するからだ。
+#
+# PR とマージ先の両方をビルドし、JS・CSS の gzip 後のサイズの増減を PR にコメントする（preactjs/compressed-size-action）。
+# 報告だけで、サイズが増えてもマージは止めない。ビルドに失敗した場合も run は success にする。
+#
+# ⚠️ 必須ワークフローは on: のフィルタ（paths / branches / types 等）が無視され全 PR で起動されるため、
+#    計測対象の判定は本ワークフロー内で行う。
+#
+# Required workflow は対象 repo から inputs を受け取れないため、計測対象は規約ベースで検出する:
+#   - package.json の依存に next / astro を持ち、同じディレクトリに bun.lock があるディレクトリ
+#     （bun.lock が無いと compressed-size-action は npm install を使うため、workspace の子などは計測しない）
+#   - PR がそのディレクトリ配下を変更していなければ、2 回のビルドを省くため計測しない
+#   - 計測対象が 0 件なら計測の job ごと skip し、run 全体は success になる
+#
+# 必須ワークフローの例外として、PR にコメントするため pull-requests: write を持つ（docs/SETUP.md「2.」）。
+# bun 本体は対象 repo の指定ではなく中央で固定し、SHA-256 検証つきで導入する。
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+# 同じ PR に新しい push があれば、古い run をキャンセルする
+concurrency:
+  group: bundle-size-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: "計測対象を判定"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      targets: ${{ steps.collect.outputs.targets }}
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # PR の変更を git diff で調べるため、マージコミットの親（マージ先）も取得する
+          fetch-depth: 2
+
+      - name: "計測対象を収集"
+        id: collect
+        shell: bash
+        env:
+          # package.json の依存から、計測するファイルとハッシュの伏せ方を決める（next / astro が無ければ対象外）
+          #   - Next.js: Turbopack のチャンク名はハッシュだけのため、ハッシュは伏せない（伏せると全ファイルが同じ名前になる）
+          #   - Astro: 名前.ハッシュ.js のハッシュを伏せ、ファイルごとの増減を追えるようにする
+          FRAMEWORKS: |
+            (.dependencies + .devDependencies) as $deps
+            | if $deps.next then {dir: $dir, pattern: ".next/static/chunks/**/*.{js,css}", strip_hash: ""}
+              elif $deps.astro then {dir: $dir, pattern: "dist/**/*.{js,css}", strip_hash: "\\.([\\w-]{8})\\.(?:js|css)$"}
+              else empty end
+        # git ls-files はコミットされたファイルだけを返すため、node_modules は対象にならない
+        run: |
+          set -euo pipefail
+          targets=$(git ls-files ':(glob)**/package.json' | while IFS= read -r pkg; do
+            dir=$(dirname "${pkg}")
+            if [ -e "${dir}/bun.lock" ] && ! git diff --quiet HEAD^1 HEAD -- "${dir}"; then
+              jq -c --arg dir "${dir}" "${FRAMEWORKS}" "${pkg}"
+            fi
+          done | jq -sc .)
+          echo "targets=${targets}" | tee -a "${GITHUB_OUTPUT}"
+
+  bundle-size:
+    name: "バンドルサイズを PR にコメント (${{ matrix.dir }})"
+    needs: detect
+    # 空の matrix は job エラーになるため、対象 0 件なら skip する（skip は run の成功として扱われる）
+    if: needs.detect.outputs.targets != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20  # PR とマージ先で 2 回ビルドする
+    permissions:
+      contents: read
+      pull-requests: write  # 増減を PR にコメントする
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.detect.outputs.targets) }}
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # マージ先のコミット（マージコミットの親）も取得しておく。
+          # 認証情報を残さないため、action の git fetch origin <ブランチ> は fatal で失敗し、git reset --hard <ブランチ> も
+          # fatal で失敗する（ログの 2 行の fatal は想定どおり）。action はそのあと、取得済みのマージ先のコミットに
+          # git reset --hard <SHA> で切り替えてビルドする
+          fetch-depth: 2
+
+      - name: "Install bun"
+        shell: bash
+        env:
+          # renovate: datasource=github-release-attachments depName=oven-sh/bun
+          VERSION: bun-v1.4.3
+          SHA256: 3e730528d89775f03f87f05c06787c4df4099d0a37f3f252e7b829cb23816e18
+        run: |
+          set -euo pipefail
+          ARCHIVE="bun-linux-x64.zip"
+          curl -sSfL -o "$ARCHIVE" "https://github.com/oven-sh/bun/releases/download/${VERSION}/${ARCHIVE}"
+
+          # SHA-256 検証（改ざん・破損を検知）
+          echo "${SHA256}  ${ARCHIVE}" | sha256sum -c -
+
+          sudo unzip -o -j "$ARCHIVE" "bun-linux-x64/bun" -d /usr/local/bin
+          sudo chmod +x /usr/local/bin/bun
+          rm -f "$ARCHIVE"
+          bun --version
+
+      - name: "バンドルサイズを比較"
+        id: compare
+        # 報告だけの計測のため、ビルドの失敗などでマージを止めない
+        continue-on-error: true
+        uses: preactjs/compressed-size-action@f322c295dde06a1cb7ccaef105732dd8a726d1d9  # 2.10.0
+        with:
+          cwd: ${{ matrix.dir }}
+          pattern: ${{ matrix.pattern }}
+          strip-hash: ${{ matrix.strip_hash }}
+          # フロントエンドが複数ある repo で、コメントをディレクトリごとに分ける
+          comment-key: ${{ matrix.dir }}
