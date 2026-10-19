@@ -19,7 +19,7 @@ permissions: {}
 
 jobs:
   code-review:
-    if: github.event_name == 'pull_request' || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/code-review'))
+    if: (github.event_name == 'pull_request' && !github.event.pull_request.draft) || (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/code-review'))
     permissions:
       contents: read
       actions: read
