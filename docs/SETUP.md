@@ -340,13 +340,13 @@ Rules セクションで以下のチェックを外す:
 | `devops` | `main` | `.github/workflows/bundle-size.yml` | フロントエンド(Next.js / Astro)の JS・CSS の gzip 後のサイズの増減を PR にコメント(報告だけで失敗しない) |
 
 > 必須ワークフローは、対象 repo のコードを実行してよい(`python.yml` / `typescript.yml` の `uv sync` / `bun install` による依存導入と、その環境上で動く mypy(プラグインを含む) / lint-imports / deptry / Biome / knip / tsc、`terraform.yml` の `terraform init` / `validate` / `test` が実行する provider・module、`bundle-size.yml` の `bun install` とビルドなど)。ただし次を守る。
-> - `permissions` は read のみとし、secrets を使わない(例外: `terraform.yml` の `terraform init` の step にだけ、private の Module Registry(registry.fastship.jp)の読み取りトークン `REGISTRY_TOKEN` を渡す。`bundle-size.yml` の計測の job にだけ、増減を PR にコメントするため `pull-requests: write` を付ける)。トリガーは `pull_request` とし、`pull_request_target` では動かさない
+> - `permissions` は read のみとし、secrets を使わない(例外: `terraform.yml` の `terraform init` の step にだけ、private の Module Registry(registry.fastship.jp)の読み取りトークン `REGISTRY_TOKEN` を渡す。`bundle-size.yml` の PR にコメントする job にだけ `pull-requests: write` を付ける。この job は checkout せず、PR のコードを動かさない)。トリガーは `pull_request` とし、`pull_request_target` では動かさない
 > - `actions/checkout` は `persist-credentials: false` にする
 > - repo の環境に依存して失敗し得る前提は、下の「導入時の前提」に書く。対応できない repo は「例外運用」で外す
 >
 > この条件なら、PR のコードが動いても、その repo の通常の CI と同じで越えられる権限の境界は無い。
 >
-> `bundle-size.yml` の `pull-requests: write` のトークンは、依存の導入やビルドの中から読まれ得る。fork を禁止しているので、悪用されるのは依存パッケージが侵害された場合に限られる。権限も PR へのコメントなどに限られ、PR の承認は「3.」の設定でできない。トークンは job の終了で失効する。
+> `bundle-size.yml` は、PR のコードを動かす計測の job を read のみにし、その結果を artifact で受け取ってコメントする job だけに `pull-requests: write` を付ける。依存パッケージが侵害されても write のトークンは読めず、コメントの投稿先もその PR に固定される。public repo の fork からの PR では、トークンが read のみになるためコメントされない(マージは止めない)。
 >
 > 検査の対象や厳しさ、src レイアウトの自パッケージの解決は、対象 repo の設定ファイル(`mypy.ini` / `[tool.deptry]` / `[build-system]` / `biome.json` / `knip.json` / `tsconfig.json` など)に従う。
 > ただし tflint の設定は `tflint.yml` に埋め込んで固定しており、対象 repo の `.tflint.hcl` とインラインの `tflint-ignore` コメントは使えない。
@@ -367,10 +367,10 @@ Rules セクションで以下のチェックを外す:
 `bundle-size.yml` は、サイズが増えても、ビルドの失敗やタイムアウト(40 分)でも fail しないため、前提は無い。ただし次の場合は計測されない、または一部だけが計測される。
 
 - PR がフロントエンドのディレクトリ配下を変更していない(2 回のビルドを省くため)
-- `package.json` と同じディレクトリに `bun.lock` が無い(workspace の子など)
+- `package.json` と同じディレクトリに `bun.lock` / `bun.lockb` が無い(workspace の子など)
 - ビルドに環境変数や secrets が要る(PR に「計測できませんでした」とコメントされる)
 - Next.js を webpack でビルドしている(計測するのは Turbopack の出力先 `.next/static/chunks/` だけで、`.next/static/css/` の CSS は含まない)
-- Next.js の `distDir` を変えている(ファイルが見つからず、増減なしと出る)
+- Next.js の `distDir` を変えている、または Astro の adapter が出力先を `dist/` 以外にしている(ファイルが見つからず、増減なしと出る)
 
 **例外運用** : ランナーで依存を導入できない repo(private index の認証が必要など)が出た場合だけ、その repo を `Bypass list` に追加するか、`Target repositories` を `Dynamic list by property` 等に変更して対象から外す。規約・lint・書式の検査も併せて外れる。
 
