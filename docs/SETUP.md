@@ -337,13 +337,16 @@ Rules セクションで以下のチェックを外す:
 | `devops` | `main` | `.github/workflows/shellcheck.yml` | シェルスクリプトの lint |
 | `devops` | `main` | `.github/workflows/python.yml` | Python の規約(uv での依存管理)・lint・書式・セキュリティ(ruff の `S` ルール)・型・依存関係 |
 | `devops` | `main` | `.github/workflows/typescript.yml` | TypeScript の規約(Bun での依存管理)・lint・書式・型・未使用パッケージ |
+| `devops` | `main` | `.github/workflows/bundle-size.yml` | フロントエンド(Next.js / Astro)の JS・CSS の gzip 後のサイズの増減を PR にコメント(報告だけで失敗しない) |
 
-> 必須ワークフローは、対象 repo のコードを実行してよい(`python.yml` / `typescript.yml` の `uv sync` / `bun install` による依存導入と、その環境上で動く mypy(プラグインを含む) / lint-imports / deptry / Biome / knip / tsc、`terraform.yml` の `terraform init` / `validate` / `test` が実行する provider・module など)。ただし次を守る。
-> - `permissions` は read のみとし、secrets を使わない(例外: `terraform.yml` の `terraform init` の step にだけ、private の Module Registry(registry.fastship.jp)の読み取りトークン `REGISTRY_TOKEN` を渡す)。トリガーは `pull_request` とし、`pull_request_target` では動かさない
+> 必須ワークフローは、対象 repo のコードを実行してよい(`python.yml` / `typescript.yml` の `uv sync` / `bun install` による依存導入と、その環境上で動く mypy(プラグインを含む) / lint-imports / deptry / Biome / knip / tsc、`terraform.yml` の `terraform init` / `validate` / `test` が実行する provider・module、`bundle-size.yml` の `bun install` とビルドなど)。ただし次を守る。
+> - `permissions` は read のみとし、secrets を使わない(例外: `terraform.yml` の `terraform init` の step にだけ、private の Module Registry(registry.fastship.jp)の読み取りトークン `REGISTRY_TOKEN` を渡す。`bundle-size.yml` の計測の job にだけ、増減を PR にコメントするため `pull-requests: write` を付ける)。トリガーは `pull_request` とし、`pull_request_target` では動かさない
 > - `actions/checkout` は `persist-credentials: false` にする
 > - repo の環境に依存して失敗し得る前提は、下の「導入時の前提」に書く。対応できない repo は「例外運用」で外す
 >
 > この条件なら、PR のコードが動いても、その repo の通常の CI と同じで越えられる権限の境界は無い。
+>
+> `bundle-size.yml` の `pull-requests: write` のトークンは、依存の導入やビルドの中から読まれ得る。fork を禁止しているので、悪用されるのは依存パッケージが侵害された場合に限られる。権限も PR へのコメントなどに限られ、PR の承認は「3.」の設定でできない。トークンは job の終了で失効する。
 >
 > 検査の対象や厳しさ、src レイアウトの自パッケージの解決は、対象 repo の設定ファイル(`mypy.ini` / `[tool.deptry]` / `[build-system]` / `biome.json` / `knip.json` / `tsconfig.json` など)に従う。
 > ただし tflint の設定は `tflint.yml` に埋め込んで固定しており、対象 repo の `.tflint.hcl` とインラインの `tflint-ignore` コメントは使えない。
@@ -360,6 +363,14 @@ Rules セクションで以下のチェックを外す:
 8. Terraform 1.16.0(`terraform.yml` で固定)で動かない `required_version` を宣言している
 9. tflint(`tflint.yml` の固定設定)の違反がある、または `.tf` に `tflint-ignore` コメントがある(違反は変更したディレクトリのみ検査するが、`tflint-ignore` の禁止は repo 全体が対象)
 10. registry.fastship.jp のモジュールを使っているのに、Organization の secret `REGISTRY_TOKEN` へのアクセスが許可されていない(`terraform init` が 401 で失敗する)
+
+`bundle-size.yml` は、サイズが増えても、ビルドの失敗やタイムアウト(40 分)でも fail しないため、前提は無い。ただし次の場合は計測されない、または一部だけが計測される。
+
+- PR がフロントエンドのディレクトリ配下を変更していない(2 回のビルドを省くため)
+- `package.json` と同じディレクトリに `bun.lock` が無い(workspace の子など)
+- ビルドに環境変数や secrets が要る(PR に「計測できませんでした」とコメントされる)
+- Next.js を webpack でビルドしている(計測するのは Turbopack の出力先 `.next/static/chunks/` だけで、`.next/static/css/` の CSS は含まない)
+- Next.js の `distDir` を変えている(ファイルが見つからず、増減なしと出る)
 
 **例外運用** : ランナーで依存を導入できない repo(private index の認証が必要など)が出た場合だけ、その repo を `Bypass list` に追加するか、`Target repositories` を `Dynamic list by property` 等に変更して対象から外す。規約・lint・書式の検査も併せて外れる。
 
@@ -445,7 +456,7 @@ terraform-linters/setup-tflint@*
 ※ `hashicorp/setup-terraform` は `terraform.yml` / `terraform-fmt.yml`、`terraform-linters/setup-tflint` は `tflint.yml` が使用する(「2.」の必須ワークフロー)。<br/>
 ※ `google-github-actions/auth` は Workload Identity 連携で Google Cloud に認証する公式 action(各リポジトリの Terraform plan / apply が使用する)。<br/>
 ※ `jdx/mise-action` は app.fastship.jp の CI(`py-check.yml` / `py-test.yml`)が、`mise.toml`・`mise.lock` の版で task・uv などを入れるために使用する(組織の必須ワークフローが効かない個人ユーザーのリポジトリでも CI を動かすため)。<br/>
-※ `preactjs/compressed-size-action` は app.fastship.jp の CI(`bundle-size.yml`)が、frontend のバンドルサイズの増減を PR にコメントするために使用する。
+※ `preactjs/compressed-size-action` は `bundle-size.yml`(「2.」の必須ワークフロー)が、フロントエンドのバンドルサイズの増減を PR にコメントするために使用する。
 
 </details>
 
