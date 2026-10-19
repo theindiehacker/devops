@@ -9,8 +9,8 @@ set -uo pipefail
 
 # Web の既定のネットワークでは mise.run が通らないため、GitHub Releases から入れる
 # renovate: datasource=github-release-attachments depName=jdx/mise
-MISE_VERSION="v2026.10.8"
-MISE_SHA256="c72477ae6c3a8e7d817a322f43da70e4643e75ee5c21265f1c19c894273b7428"
+MISE_VERSION="v2026.10.11"
+MISE_SHA256="f9612efcddda0ae55b62d3b6f82a6c860d5b54ebee0807d4f1a1d578055e1607"
 
 BIN_DIR="${HOME}/.local/bin"
 SHIMS_DIR="${MISE_DATA_DIR:-${HOME}/.local/share/mise}/shims"
