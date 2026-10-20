@@ -1,5 +1,5 @@
 # 🛠️ DevOps ( 👉 FastShip CLI )
-Organization 共通の CI / ruleset / Lefthook / Taskfile / Claude Code プラグインを管理するリポジトリ
+Organization 共通の CI / ruleset / Lefthook / Taskfile を管理するリポジトリ
 
 ```mermaid
 graph TD;
@@ -70,30 +70,9 @@ Claude Code on the web で pre-commit を動かすには、`.claude/settings.jso
 ```
 
 ## 🧩 Claude Code プラグイン
-このリポジトリは Claude Code プラグインのマーケットプレイス（`fastship`）を兼ねる。プラグインの開発方法は [CONTRIBUTING.md](./CONTRIBUTING.md) を参照。
+Claude Code プラグインのマーケットプレイス（`fastship`）は [theindiehacker/fastship-plugin](https://github.com/theindiehacker/fastship-plugin) に移した。インストール方法はそちらの README を参照。
 
-### 🧰 Install
-```
-/plugin marketplace add https://github.com/theindiehacker/devops.git
-```
-
-<details><summary><b>🛠️ 開発(<code>/dev:</code>)プラグイン</b></summary>
-
-```
-/plugin install security-guidance@claude-plugins-official
-/plugin install dev@fastship  # 依存する ruleset@fastship も有効になる
-```
-
-</details>
-
-### 🔄 Update
-マーケットプレイスを最新化してから、インストール済みプラグインを更新する。
-
-```
-/plugin marketplace update fastship
-```
-
-以降、`/plugin` コマンドからプラグイン一覧・更新状況を確認できる。
+> ⚠️ このリポジトリの `plugins/` と `.claude-plugin/` は、移行前の Claude ワークフローを参照しているリポジトリの CI のために残しているだけで、更新しない。全リポジトリが移行後のタグに上がったら削除する。
 
 ## ❓ 使い方
 ### 🎊 セットアップ
@@ -111,7 +90,7 @@ graph LR;
     session -->|実装・PR 作成| pr("🔀 Pull Request")
 ```
 
-`/dev:setup` を実行すると、対象リポジトリに `claude:implement` ラベルを作り、実行者の claude.ai アカウントに「`<リポジトリ名> / 実装`」ルーティンを用意する（手順の詳細は [plugins/dev/skills/setup/SKILL.md](./plugins/dev/skills/setup/SKILL.md) の「6.」）。
+`/dev:setup` を実行すると、対象リポジトリに `claude:implement` ラベルを作り、実行者の claude.ai アカウントに「`<リポジトリ名> / 実装`」ルーティンを用意する（手順の詳細は fastship-plugin の [plugins/dev/skills/setup/SKILL.md](https://github.com/theindiehacker/fastship-plugin/blob/main/plugins/dev/skills/setup/SKILL.md) の「6.」）。
 
 > ⚠️ ルーティンは実行者個人の claude.ai アカウントに紐づき、チームでは共有されない。Claude GitHub App が対象リポジトリにインストールされている必要がある。
 >

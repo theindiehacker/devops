@@ -1,6 +1,8 @@
 # fastship-plugins を devops に統合し、PUBLIC にする
 
 > 2026-10-09 合意済み。fastship-plugins は削除する。README のタイトルは変えない。
+>
+> 2026-10-20 追記: プラグインは [theindiehacker/fastship-plugin](https://github.com/theindiehacker/fastship-plugin) に戻した。
 
 ## 目的
 - 組織共通の開発基盤（CI / Taskfile / lefthook / mise / Claude Code プラグイン）を 1 リポジトリで管理し、2 リポジトリ間の同期をなくす
