@@ -274,13 +274,13 @@ jobs:
           set -euo pipefail
           # workspace の全メンバー・extras・dependency-groups まで入れる（不足すると Pyright / deptry が誤検知する）
           if uv sync --frozen --all-packages --all-extras --all-groups; then exit 0; fi
-          echo "::warning::extras を含めた uv sync に失敗したため extras を除いて検査します（extras 限定の依存は deptry が誤検知することがあります）"
+          echo "::warning::extras を含めた uv sync に失敗したため extras を除いて検査します（extras 限定の依存は Pyright / deptry が誤検知することがあります）"
           # 導入できなければ検査を skip せず fail させる（緑のまま「何も検査していない」状態を作らないため）
           uv sync --frozen --all-packages --all-groups || { echo "::error::uv sync に失敗しました。ランナーで依存を導入できない repo の扱いは docs/SETUP.md「✏️ スタイルチェック」の例外運用を参照してください"; exit 1; }
 
       # 検査対象と厳しさは、このプロジェクト（uv.lock のあるディレクトリ）の [tool.pyright] / pyrightconfig.json に委ねる
       # （位置引数を渡すと設定の include が無視される。mypy と同じく、workspace のメンバーの設定は読まれない）。
-      # -p .: このディレクトリの設定を使い、親ディレクトリの pyrightconfig.json を探しに行かせない（入れ子のプロジェクトが親の設定で検査されるのを防ぐ）。
+      # -p .: このディレクトリに設定があればそれを使う（無ければ親の pyrightconfig.json が使われるため、下で書き出す）。
       # Pyright の wheel は本体を同梱しており、Node.js はランナーのものを使う（実行時に npm から取得しない）
       - name: "🧱 Pyright - 型チェック"
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
@@ -293,36 +293,51 @@ jobs:
           set -euo pipefail
           # 別の uv.lock を持つ入れ子のプロジェクト（自分の matrix で検査される）。どれがどの uv.lock に属するかは detect が決める
           nested=$(jq -c --arg project "${PROJECT}" '.[$project] // []' <<< "${NESTED}")
-          # 利用者の設定があれば書き換えない（入れ子のプロジェクトを除くかも利用者に任せ、落ちたときに案内する）。
-          # [tool.pyright.xxx] などのサブテーブルだけで書かれた設定も、利用者の設定として扱う
-          if [ ! -e pyrightconfig.json ] && ! grep -qE '^[[:space:]]*\[+tool\.pyright[].]' pyproject.toml 2> /dev/null; then
-            if [ -e mypy.ini ] || [ -e .mypy.ini ] || grep -qE '^[[:space:]]*\[+tool\.mypy[].]' pyproject.toml 2> /dev/null || grep -qE '^[[:space:]]*\[mypy(-|\])' setup.cfg 2> /dev/null; then
-              echo "::warning::Pyright: mypy の設定は使われません。検査対象や厳しさは pyproject.toml の [tool.pyright] に移してください（https://microsoft.github.io/pyright/#/configuration）"
+          # 設定の有無は TOML / INI として読んで判定する（サブテーブル・ドット付きのキーなど、どの書き方でも拾う）。
+          # ランナーの Python（3.11 以上）で読む。対象 repo のコードは動かさない
+          has_tool() { # <pyproject.toml の [tool] の下の名前>
+            python3 -c 'import sys, tomllib; sys.exit(sys.argv[1] not in tomllib.load(open("pyproject.toml", "rb")).get("tool", {}))' "$1" 2> /dev/null
+          }
+          has_mypy_cfg() { # setup.cfg の [mypy] / [mypy-xxx]
+            python3 -c 'import configparser, sys; c = configparser.ConfigParser(); c.read("setup.cfg"); sys.exit(not any(s == "mypy" or s.startswith("mypy-") for s in c.sections()))' 2> /dev/null
+          }
+          # 利用者の設定があれば書き換えない（入れ子のプロジェクトを除くかも利用者に任せ、落ちたときに案内する）
+          if [ -e pyrightconfig.json ]; then
+            config="pyrightconfig.json"
+          else
+            # pyrightconfig.json が無ければ [tool.pyright] が読まれる。案内もそこを指す
+            config="pyproject.toml の [tool.pyright]"
+            if ! has_tool pyright; then
+              if [ -e mypy.ini ] || [ -e .mypy.ini ] || has_tool mypy || has_mypy_cfg; then
+                echo "::warning::Pyright: mypy の設定は使われません。検査対象や厳しさは pyproject.toml の [tool.pyright] に移してください（https://microsoft.github.io/pyright/#/configuration）"
+              fi
+              # 設定が無いと、-p . でも親ディレクトリの pyrightconfig.json が使われ、ディレクトリ全体が検査される。
+              # このプロジェクトの設定を書き出し、入れ子のプロジェクトを除く（既定の除外 node_modules・隠しディレクトリなどは残る）
+              jq -n --argjson nested "${nested}" '{exclude: $nested}' > pyrightconfig.json
             fi
-            # 設定が無いと Pyright は親ディレクトリの pyrightconfig.json を使い（-p . でも同じ）、ディレクトリ全体を検査する。
-            # このプロジェクトの設定を書き出し、入れ子のプロジェクトを除く（既定の除外 node_modules・隠しディレクトリなどは残る）
-            jq -n --argjson nested "${nested}" '{exclude: $nested}' > pyrightconfig.json
           fi
-          # 導入の失敗を型エラー（exit 1）と取り違えないよう、先に導入する
-          if ! uv run --no-sync --with "pyright==${PYRIGHT_VERSION}" pyright --version > /dev/null; then
+          # 一度だけ導入し、導入の失敗を型エラー（exit 1）と取り違えないようにする。
+          # 実行はプロジェクトの環境（uv run）で行い、import をプロジェクトの依存で解決させる
+          if ! uv tool install --quiet "pyright==${PYRIGHT_VERSION}"; then
             echo "::error::Pyright: pyright ${PYRIGHT_VERSION} を導入できませんでした。PyPI に接続できるか確かめてください"
             exit 1
           fi
+          pyright="$(uv tool dir --bin)/pyright"
           log=$(mktemp)
           status=0
-          uv run --no-sync --with "pyright==${PYRIGHT_VERSION}" pyright -p . | tee "${log}" || status=$?
+          uv run --no-sync "${pyright}" -p . | tee "${log}" || status=$?
           case "${status}" in
             0) ;;
             1)
-              echo "::error::Pyright: 型エラーを直してください。検査から外すディレクトリ（scripts/ など）は pyproject.toml の [tool.pyright] の include / exclude で絞れます（https://microsoft.github.io/pyright/#/configuration）"
-              # 入れ子のプロジェクトで import を解決できていないときだけ、exclude に入れるよう案内する
-              unresolved=$(jq -c --arg pwd "${PWD}" --rawfile log "${log}" '[.[] | select(. as $dir | $log | split("\n") | any(contains($pwd + "/" + $dir + "/") and contains("reportMissingImports")))]' <<< "${nested}")
-              if [ "${unresolved}" != "[]" ]; then
+              echo "::error::Pyright: 型エラーを直してください。検査から外すディレクトリ（scripts/ など）は ${config} の include / exclude で絞れます（https://microsoft.github.io/pyright/#/configuration）"
+              # 入れ子のプロジェクトのファイルに指摘があれば、このプロジェクトの環境で検査されている（除外できていない）
+              unchecked=$(jq -c --arg pwd "${PWD}" --rawfile log "${log}" '[.[] | select(. as $dir | $log | split("\n") | any(contains($pwd + "/" + $dir + "/") and test(" - (error|warning): ")))]' <<< "${nested}")
+              if [ "${unchecked}" != "[]" ]; then
                 # パスは対象 repo 由来のため、ワークフローコマンドとしてエスケープする
-                echo "::error::Pyright: 入れ子のプロジェクト（$(jq -r 'join(", ") | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A")' <<< "${unresolved}")）は、このプロジェクトの環境では import を解決できません。[tool.pyright] の exclude に入れてください（それぞれ自分の環境で検査されます）"
+                echo "::error::Pyright: 入れ子のプロジェクト（$(jq -r 'join(", ") | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A")' <<< "${unchecked}")）が、このプロジェクトの環境で検査されています。${config} の exclude に入れてください（それぞれ自分の環境で検査されます）"
               fi
               ;;
-            *) echo "::error::Pyright: 型チェックを実行できませんでした（exit ${status}）。[tool.pyright] / pyrightconfig.json の書き方が正しいか確かめてください（https://microsoft.github.io/pyright/#/configuration）" ;;
+            *) echo "::error::Pyright: 型チェックを実行できませんでした（exit ${status}）。${config} の書き方が正しいか確かめてください（https://microsoft.github.io/pyright/#/configuration）" ;;
           esac
           exit "${status}"
 
