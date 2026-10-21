@@ -58,6 +58,8 @@ jobs:
               - "**/.ruff.toml"
               - "**/pyproject.toml"
               - "**/pyrightconfig.json"
+              # extends で読む共有の設定は、この名前にすれば変更で検査が動く
+              - "**/pyright*.json"
               - "**/setup.cfg"
               - "**/.importlinter"
               - "**/uv.lock"
@@ -294,12 +296,15 @@ jobs:
           # 別の uv.lock を持つ入れ子のプロジェクト（自分の matrix で検査される）。どれがどの uv.lock に属するかは detect が決める
           nested=$(jq -c --arg project "${PROJECT}" '.[$project] // []' <<< "${NESTED}")
           # 設定の有無は TOML / INI として読んで判定する（サブテーブル・ドット付きのキーなど、どの書き方でも拾う）。
-          # ランナーの Python（3.11 以上）で読む。対象 repo のコードは動かさない
+          # ランナーの Python（3.11 以上）で読む。-I: カレントディレクトリ（対象 repo）のモジュールを import しない。
+          # 終了コード: 0 = ある、10 = 無い、それ以外 = 読めなかった
           has_tool() { # <pyproject.toml の [tool] の下の名前>
-            python3 -c 'import sys, tomllib; sys.exit(sys.argv[1] not in tomllib.load(open("pyproject.toml", "rb")).get("tool", {}))' "$1" 2> /dev/null
+            [ -e pyproject.toml ] || return 10
+            python3 -I -c 'import sys, tomllib; sys.exit(0 if sys.argv[1] in tomllib.load(open("pyproject.toml", "rb")).get("tool", {}) else 10)' "$1"
           }
-          has_mypy_cfg() { # setup.cfg の [mypy] / [mypy-xxx]
-            python3 -c 'import configparser, sys; c = configparser.ConfigParser(); c.read("setup.cfg"); sys.exit(not any(s == "mypy" or s.startswith("mypy-") for s in c.sections()))' 2> /dev/null
+          has_mypy_cfg() { # setup.cfg の [mypy] / [mypy-xxx]。configparser が読めない書き方（見出しの前の行など）でも拾えるよう、見出しの行を探す
+            [ -e setup.cfg ] || return 10
+            python3 -I -c 'import re, sys; sys.exit(0 if any(re.match(r"\[mypy(-[^]]*)?\]", line) for line in open("setup.cfg", encoding="utf-8", errors="replace")) else 10)'
           }
           # 利用者の設定があれば書き換えない（入れ子のプロジェクトを除くかも利用者に任せ、落ちたときに案内する）
           if [ -e pyrightconfig.json ]; then
@@ -307,7 +312,13 @@ jobs:
           else
             # pyrightconfig.json が無ければ [tool.pyright] が読まれる。案内もそこを指す
             config="pyproject.toml の [tool.pyright]"
-            if ! has_tool pyright; then
+            pyright_config=0
+            has_tool pyright || pyright_config=$?
+            if [ "${pyright_config}" -ne 0 ] && [ "${pyright_config}" -ne 10 ]; then
+              # 読めないときは、利用者の [tool.pyright] を上書きしないよう設定を書き出さない
+              echo "::warning::Pyright: pyproject.toml を読めませんでした。[tool.pyright] があるか判定できないため、そのまま検査します"
+            fi
+            if [ "${pyright_config}" -eq 10 ]; then
               if [ -e mypy.ini ] || [ -e .mypy.ini ] || has_tool mypy || has_mypy_cfg; then
                 echo "::warning::Pyright: mypy の設定は使われません。検査対象や厳しさは pyproject.toml の [tool.pyright] に移してください（https://microsoft.github.io/pyright/#/configuration）"
               fi
@@ -319,7 +330,7 @@ jobs:
           # 一度だけ導入し、導入の失敗を型エラー（exit 1）と取り違えないようにする。
           # 実行はプロジェクトの環境（uv run）で行い、import をプロジェクトの依存で解決させる
           if ! uv tool install --quiet "pyright==${PYRIGHT_VERSION}"; then
-            echo "::error::Pyright: pyright ${PYRIGHT_VERSION} を導入できませんでした。PyPI に接続できるか確かめてください"
+            echo "::error::Pyright: pyright ${PYRIGHT_VERSION} を導入できませんでした。上の uv のエラーを確かめてください"
             exit 1
           fi
           pyright="$(uv tool dir --bin)/pyright"
