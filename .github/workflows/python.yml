@@ -344,13 +344,17 @@ jobs:
             echo "::error::Pyright: ${config} の include に存在しないパスがあります。検査されないファイルが出ないよう直してください（https://microsoft.github.io/pyright/#/configuration）"
             exit 1
           fi
-          # 設定の打ち間違い（知らない設定・不正な値）も、Pyright はその設定を無視して検査し、型エラーが無ければ 0 で終わる
-          if grep -qE '^Config (contains unrecognized setting|")' "${log}"; then
+          # 設定の打ち間違い（知らない設定・不正な値・executionEnvironments の中の誤り）も、Pyright はその設定を無視して検査し、型エラーが無ければ 0 で終わる。
+          # "$schema"（エディタの補完に使う JSON Schema のキー）は Pyright が知らない設定として出すが、正しい設定なので除く
+          # shellcheck disable=SC2016 # "$schema" は展開せず、そのままの文字列として探す
+          if grep -E '^Config (contains unrecognized setting|"|executionEnvironments index [0-9]+: )' "${log}" | grep -vqF 'unrecognized setting "$schema"'; then
             echo "::error::Pyright: ${config} に、知らない設定か不正な値があります。上の Config の行を確かめて直してください（https://microsoft.github.io/pyright/#/configuration）"
             [ "${status}" -ne 0 ] || exit 1
           fi
           # 利用者の設定で検査するファイルが 1 つも無いときも 0 で終わる（mypy は落ちていた）。
-          # 書き出した設定では、コードがすべて入れ子のプロジェクトにあり 0 件のことがあるため落とさない
+          # 書き出した設定では、コードがすべて入れ子のプロジェクトにあり 0 件のことがあるため落とさない。
+          # include の項目ごとの 0 件（ほかの項目にファイルがある）は、項目ごとの一覧が要るため見ない。
+          # これらの判定は Pyright の出力の文言に頼るため、PYRIGHT_VERSION を上げたら文言が変わっていないか確かめる
           if [ "${status}" -eq 0 ] && [ "${generated}" = false ] && grep -q '^No source files found\.$' "${log}"; then
             echo "::error::Pyright: ${config} の include / exclude に当てはまる Python ファイルがありません。検査されないファイルが出ないよう直してください（https://microsoft.github.io/pyright/#/configuration）"
             exit 1
