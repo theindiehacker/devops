@@ -57,8 +57,7 @@ jobs:
               - "**/ruff.toml"
               - "**/.ruff.toml"
               - "**/pyproject.toml"
-              - "**/pyrightconfig.json"
-              # extends で読む共有の設定は、この名前にすれば変更で検査が動く
+              # pyrightconfig.json と、extends で読む共有の設定（この名前にすれば変更で検査が動く）
               - "**/pyright*.json"
               - "**/setup.cfg"
               - "**/.importlinter"
@@ -295,7 +294,7 @@ jobs:
           set -euo pipefail
           # 別の uv.lock を持つ入れ子のプロジェクト（自分の matrix で検査される）。どれがどの uv.lock に属するかは detect が決める
           nested=$(jq -c --arg project "${PROJECT}" '.[$project] // []' <<< "${NESTED}")
-          # 設定の有無は TOML / INI として読んで判定する（サブテーブル・ドット付きのキーなど、どの書き方でも拾う）。
+          # 設定の有無は、pyproject.toml を TOML として読み（サブテーブル・ドット付きのキーなど、どの書き方でも拾う）、setup.cfg は見出しの行を探して判定する。
           # ランナーの Python（3.11 以上）で読む。-I: カレントディレクトリ（対象 repo）のモジュールを import しない。
           # 終了コード: 0 = ある、10 = 無い、それ以外 = 読めなかった
           has_tool() { # <pyproject.toml の [tool] の下の名前>
