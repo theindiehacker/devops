@@ -274,12 +274,30 @@ jobs:
           # 導入できなければ検査を skip せず fail させる（緑のまま「何も検査していない」状態を作らないため）
           uv sync --frozen --all-packages --all-groups || { echo "::error::uv sync に失敗しました。ランナーで依存を導入できない repo の扱いは docs/SETUP.md「✏️ スタイルチェック」の例外運用を参照してください"; exit 1; }
 
-      # 検査対象と厳しさは対象 repo の [tool.pyright] / pyrightconfig.json に委ねる（位置引数を渡すと設定の include が無視される）。
-      # 設定が無ければ、プロジェクトのディレクトリ全体を standard モードで検査する。
-      # [nodejs]: ランナーの Node.js に左右されないよう、Pyright を動かす Node.js も入れる
+      # 検査対象と厳しさは、このプロジェクト（uv.lock のあるディレクトリ）の [tool.pyright] / pyrightconfig.json に委ねる
+      # （位置引数を渡すと設定の include が無視される。mypy と同じく、workspace のメンバーの設定は読まれない）。
+      # Pyright の wheel は本体を同梱しており、Node.js はランナーのものを使う（実行時に npm から取得しない）
       - name: "🧱 Pyright - 型チェック"
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
-        run: uv run --no-sync --with "pyright[nodejs]==${PYRIGHT_VERSION}" pyright
+        env:
+          PROJECTS: ${{ needs.detect.outputs.projects }}
+          PROJECT: ${{ matrix.project }}
+        run: |
+          set -euo pipefail
+          if [ ! -e pyrightconfig.json ] && ! grep -qE '^\[tool\.pyright\]' pyproject.toml 2> /dev/null; then
+            if [ -e mypy.ini ] || [ -e .mypy.ini ] || grep -qE '^\[tool\.mypy\]' pyproject.toml 2> /dev/null; then
+              echo "::warning::Pyright: mypy の設定は使われません。検査対象や厳しさは pyproject.toml の [tool.pyright] に移してください（https://microsoft.github.io/pyright/#/configuration）"
+            fi
+            # 設定が無いとディレクトリ全体を検査するため、別の uv.lock を持つ入れ子のプロジェクト（自分の matrix で検査される）を除く。
+            # exclude を書くと既定の除外が外れるため、既定の 3 つも並べる
+            nested=$(jq -c --arg project "${PROJECT}" '[.[] | select(. != $project) | if $project == "." then . elif startswith($project + "/") then ltrimstr($project + "/") else empty end]' <<< "${PROJECTS}")
+            if [ "${nested}" != "[]" ]; then
+              jq -n --argjson nested "${nested}" '{exclude: (["**/node_modules", "**/__pycache__", "**/.*"] + $nested)}' > pyrightconfig.json
+            fi
+          fi
+          if uv run --no-sync --with "pyright==${PYRIGHT_VERSION}" pyright; then exit 0; fi
+          echo "::error::Pyright: 型エラーを直してください。検査から外すディレクトリ（scripts/ など）は pyproject.toml の [tool.pyright] の include / exclude で絞れます（https://microsoft.github.io/pyright/#/configuration）"
+          exit 1
 
       - name: "➡️ lint-imports - モジュール依存関係を検査"
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
