@@ -19,8 +19,8 @@ env:
   UV_VERSION: "0.13.1"
   # renovate: datasource=pypi depName=ruff
   RUFF_VERSION: "0.17.1"
-  # renovate: datasource=pypi depName=mypy
-  MYPY_VERSION: "2.4.0"
+  # renovate: datasource=pypi depName=pyright
+  PYRIGHT_VERSION: "1.1.414"
   # renovate: datasource=pypi depName=import-linter
   IMPORT_LINTER_VERSION: "2.15"
   # renovate: datasource=pypi depName=deptry
@@ -55,8 +55,7 @@ jobs:
               - "**/ruff.toml"
               - "**/.ruff.toml"
               - "**/pyproject.toml"
-              - "**/mypy.ini"
-              - "**/.mypy.ini"
+              - "**/pyrightconfig.json"
               - "**/setup.cfg"
               - "**/.importlinter"
               - "**/uv.lock"
@@ -269,24 +268,18 @@ jobs:
         if: ${{ !cancelled() && steps.uv.outcome == 'success' }}
         run: |
           set -euo pipefail
-          # workspace の全メンバー・extras・dependency-groups まで入れる（不足すると mypy / deptry が誤検知する）
+          # workspace の全メンバー・extras・dependency-groups まで入れる（不足すると Pyright / deptry が誤検知する）
           if uv sync --frozen --all-packages --all-extras --all-groups; then exit 0; fi
           echo "::warning::extras を含めた uv sync に失敗したため extras を除いて検査します（extras 限定の依存は deptry が誤検知することがあります）"
           # 導入できなければ検査を skip せず fail させる（緑のまま「何も検査していない」状態を作らないため）
           uv sync --frozen --all-packages --all-groups || { echo "::error::uv sync に失敗しました。ランナーで依存を導入できない repo の扱いは docs/SETUP.md「✏️ スタイルチェック」の例外運用を参照してください"; exit 1; }
 
-      # 検査対象は対象 repo の [tool.mypy] files / packages / modules に委ねる（位置引数を渡すと設定側の宣言が無視される）
-      - name: "🧱 mypy - 型チェック"
+      # 検査対象と厳しさは対象 repo の [tool.pyright] / pyrightconfig.json に委ねる（位置引数を渡すと設定の include が無視される）。
+      # 設定が無ければ、プロジェクトのディレクトリ全体を standard モードで検査する。
+      # [nodejs]: ランナーの Node.js に左右されないよう、Pyright を動かす Node.js も入れる
+      - name: "🧱 Pyright - 型チェック"
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
-        run: |
-          set -euo pipefail
-          log=$(mktemp)
-          if uv run --no-sync --with "mypy==${MYPY_VERSION}" mypy 2>&1 | tee "${log}"; then exit 0; fi
-          # 対象の宣言が無いと mypy は usage エラー（exit 2）で終わるため、対処方法を出す
-          if grep -qF 'Missing target module' "${log}"; then
-            echo "::error::mypy: 検査対象が宣言されていません。pyproject.toml の [tool.mypy] に files / packages / modules を宣言してください（https://mypy.readthedocs.io/en/stable/config_file.html#confval-files）"
-          fi
-          exit 1
+        run: uv run --no-sync --with "pyright[nodejs]==${PYRIGHT_VERSION}" pyright
 
       - name: "➡️ lint-imports - モジュール依存関係を検査"
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
