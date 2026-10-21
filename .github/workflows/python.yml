@@ -307,6 +307,7 @@ jobs:
             python3 -I -c 'import re, sys; sys.exit(0 if any(re.match(r"\[mypy(-[^]]*)?\]", line) for line in open("setup.cfg", encoding="utf-8", errors="replace")) else 10)'
           }
           # 利用者の設定があれば書き換えない（入れ子のプロジェクトを除くかも利用者に任せ、落ちたときに案内する）
+          generated=false
           if [ -e pyrightconfig.json ]; then
             config="pyrightconfig.json"
           else
@@ -325,6 +326,7 @@ jobs:
               # 設定が無いと、-p . でも親ディレクトリの pyrightconfig.json が使われ、ディレクトリ全体が検査される。
               # このプロジェクトの設定を書き出し、入れ子のプロジェクトを除く（既定の除外 node_modules・隠しディレクトリなどは残る）
               jq -n --argjson nested "${nested}" '{exclude: $nested}' > pyrightconfig.json
+              generated=true
             fi
           fi
           # 一度だけ導入し、導入の失敗を型エラー（exit 1）と取り違えないようにする。
@@ -336,11 +338,26 @@ jobs:
           pyright="$(uv tool dir --bin)/pyright"
           log=$(mktemp)
           status=0
-          uv run --no-sync "${pyright}" -p . | tee "${log}" || status=$?
+          # 存在しないパスの警告などは標準エラーに出るため、ログに入れる
+          uv run --no-sync "${pyright}" -p . 2>&1 | tee "${log}" || status=$?
+          # Pyright は include のパスが無くても 0 で終わる。何も検査しないまま通らないよう落とす（mypy も落ちていた）
+          if [ "${status}" -eq 0 ] && grep -q ' does not exist\.$' "${log}"; then
+            echo "::error::Pyright: ${config} の include に存在しないパスがあります。検査されないファイルが出ないよう直してください（https://microsoft.github.io/pyright/#/configuration）"
+            exit 1
+          fi
+          # ラッパー（pyright-python）が Pyright を起動できないときも 1 で終わる。Pyright は必ず集計の行を出すため、無ければ実行時のエラーとして扱う
+          if [ "${status}" -eq 1 ] && ! grep -qE '^[0-9]+ errors?, [0-9]+ warnings?, [0-9]+ informations?$' "${log}"; then
+            status=2
+          fi
           case "${status}" in
             0) ;;
             1)
-              echo "::error::Pyright: 型エラーを直してください。検査から外すディレクトリ（scripts/ など）は ${config} の include / exclude で絞れます（https://microsoft.github.io/pyright/#/configuration）"
+              keep=""
+              if [ "${generated}" = true ] && [ "${nested}" != "[]" ]; then
+                # 書き出した設定にしか入れ子のプロジェクトの除外が無いため、利用者が設定を書くときに残すよう伝える
+                keep="（設定を書くときは、入れ子のプロジェクト $(jq -r 'join(", ") | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A")' <<< "${nested}") も exclude に入れてください）"
+              fi
+              echo "::error::Pyright: 型エラーを直してください。検査から外すディレクトリ（scripts/ など）は ${config} の include / exclude で絞れます${keep}（https://microsoft.github.io/pyright/#/configuration）"
               # 入れ子のプロジェクトのファイルに指摘があれば、このプロジェクトの環境で検査されている（除外できていない）
               unchecked=$(jq -c --arg pwd "${PWD}" --rawfile log "${log}" '[.[] | select(. as $dir | $log | split("\n") | any(contains($pwd + "/" + $dir + "/") and test(" - (error|warning): ")))]' <<< "${nested}")
               if [ "${unchecked}" != "[]" ]; then
@@ -348,7 +365,7 @@ jobs:
                 echo "::error::Pyright: 入れ子のプロジェクト（$(jq -r 'join(", ") | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A")' <<< "${unchecked}")）が、このプロジェクトの環境で検査されています。${config} の exclude に入れてください（それぞれ自分の環境で検査されます）"
               fi
               ;;
-            *) echo "::error::Pyright: 型チェックを実行できませんでした（exit ${status}）。${config} の書き方が正しいか確かめてください（https://microsoft.github.io/pyright/#/configuration）" ;;
+            *) echo "::error::Pyright: 型チェックを実行できませんでした（exit ${status}）。上のエラーと、${config} の書き方を確かめてください（https://microsoft.github.io/pyright/#/configuration）" ;;
           esac
           exit "${status}"
 
