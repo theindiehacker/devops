@@ -71,7 +71,7 @@ PR でセキュリティ検知された際はこのチームからの Approve �
 
 | ロール | 目的 |
 |:------|:----|
-| `Security manager` | 全リポジトリの Read 権限が自動付与され、2.5・2.6 の Required reviewers が**リポジトリごとのチーム登録(Add teams)なしで自動レビュアー指定**されるようになる(新規リポジトリも自動で対象)。org 全体のセキュリティアラートの閲覧・管理権限も付く |
+| `Security manager` | 全リポジトリの Read 権限が自動付与され、2.4・2.5 の Required reviewers が**リポジトリごとのチーム登録(Add teams)なしで自動レビュアー指定**されるようになる(新規リポジトリも自動で対象)。org 全体のセキュリティアラートの閲覧・管理権限も付く |
 | `All-repository write` | 承認が Required approvals にカウントされるのは write アクセス保持者のレビューのみのため、Read 相当の Security manager と併用する |
 
 ※ 自動レビュアー指定が機能するのは「リポジトリへの直接登録(Add teams)」か「Security manager ロール」の場合のみ。`All-repository write` など一般の org role だけでは、承認は可能になるがレビュアーの自動指定はされない。
@@ -83,7 +83,7 @@ PR でセキュリティ検知された際はこのチームからの Approve �
 ## 2. 📚 Organization ルールセットを設定
 Organization ページ → Settings → Repository → Rulesets を選択し、以下のルールを設定して下さい。
 
-> ⚠️ **前提** : branch ruleset(2.1〜2.7)が保護するのは default branch のみ。リリースも default branch(main)のマージ済みコミットから行う運用を前提とする。
+> ⚠️ **前提** : branch ruleset(2.1〜2.6)が保護するのは default branch のみ。リリースも default branch(main)のマージ済みコミットから行う運用を前提とする。
 > タグやリリースブランチを起点にデプロイする運用を導入する場合は、レビューを経ないコミットからタグを切れてしまうため、別途 tag ruleset / 対象ブランチの追加が必要。
 > 本リポジトリのリリースタグ(`v*`)の tag ruleset は「5.」で設定する。
 
@@ -137,34 +137,7 @@ Rules セクションで以下のチェックを外す:
 | Allowed merge methods | `Merge` / `Squash` / `Rebase`(すべて許可) |
 
 ※ 承認が Required approvals にカウントされるのは write アクセス保持者のレビューのみ。PR 作成者本人による自己承認はできない。<br/>
-※ Renovate の更新 PR を承認なしで自動マージするため、Renovate 用 GitHub App を Bypass list に追加する。必須ワークフローのルールセット(2.3・2.4・2.7)には追加しないこと(失敗した検査を無視してマージされるようになる)
-
-</details>
-
-<details><summary><b>「🔑 シークレットの混入検知」</b></summary>
-
-| 設定項目 | 値                        |
-|:-------:|:-------------------------|
-| Ruleset Name | `🔑 シークレットの混入検知`         |
-| Enforcement status | `Active`                 |
-| Bypass list | 空のまま                     |
-| Target repositories | `All repositories`       |
-| Target branches | `Include default branch` |
-
-Rules セクションで以下のチェックを外す:
-
-- ⬜︎ Restrict deletions
-- ⬜︎ Block force pushes
-
-以下のチェックを入れる:
-
- - ✅ **Require workflows to pass before merging** (PRマージ前に指定したワークフローの成功を必須にする) — 「Add workflow」から以下を追加:
-
-| Repository | Branch | Workflow |
-|:-----------|:-------|:---------|
-| `github-workflows` | `main` | `.github/workflows/gitleaks.yml` |
-
- - ✅ **Do not require workflows on creation**
+※ Renovate の更新 PR を承認なしで自動マージするため、Renovate 用 GitHub App を Bypass list に追加する。必須ワークフローのルールセット(2.3・2.6)には追加しないこと(失敗した検査を無視してマージされるようになる)
 
 </details>
 
@@ -189,10 +162,17 @@ Rules セクションで以下のチェックを外す:
 
 | Repository | Branch | Workflow |
 |:-----------|:-------|:---------|
-| `github-workflows` | `main` | `.github/workflows/trivy.yml` |
-| `github-workflows` | `main` | `.github/workflows/zizmor.yml` |
-| `github-workflows` | `main` | `.github/workflows/semgrep.yml` |
-| `github-workflows` | `main` | `.github/workflows/ghalint.yml` |
+| `github-workflows` | `main` | `.github/workflows/security.yml` |
+
+`security.yml` は次を検査する。常に動くのは `scan` の job だけで、PR のコードは実行しない(イメージのビルドは `scan-image` の job で行う)。
+
+| 検査 | 内容 |
+|:----|:----|
+| Gitleaks | PR のコミットに混入したシークレット(圧縮ファイルの中も含む) |
+| ghalint | ワークフローのセキュリティポリシー(permissions 未設定・action の SHA 未固定など)。ワークフローを変更したときだけ |
+| zizmor | GitHub Actions の設定の脆弱性(severity HIGH 以上)。ワークフロー・action 定義などを変更したときだけ |
+| Semgrep | アプリケーションコード(ルールセット `p/default`・severity ERROR)。PR で新規に増えた検出のみ |
+| Trivy | 依存パッケージの脆弱性と IaC の設定ミス(MEDIUM 以上・修正版があるもの)、Dockerfile からビルドしたイメージの脆弱性 |
 
 - ✅ **Do not require workflows on creation**
 
@@ -257,14 +237,14 @@ ghalint.yaml
 
 ※ `trivy.yaml`(リポジトリ直下)は Trivy が自動読込する設定ファイルで、`ignorefile` / `ignore-policy` により抑制先を差し替えられるため対象に含める。レビュー時はこの 2 項目が上記対象外のファイルを指していないかを確認する<br/>
 ※ `**/.semgrepignore` は Semgrepignore v2(Semgrep 1.117 以降のデフォルト)でサブディレクトリの `.semgrepignore` も有効になるため対象に含める<br/>
-※ zizmor の設定はワークフロー側(`.github/workflows/zizmor.yml` の `--config` / `--no-config`)で `.github/zizmor.yml` に固定しているため、自動探索され得る他パス(リポジトリ直下の `zizmor.yml` 等)の列挙は不要
+※ zizmor の設定はワークフロー側(`.github/actions/zizmor` の `--config` / `--no-config`)で `.github/zizmor.yml` に固定しているため、自動探索され得る他パス(リポジトリ直下の `zizmor.yml` 等)の列挙は不要
 
 </details>
 
 <details><summary><b>「🛠️ 検知ワークフロー変更の承認必須化」</b></summary>
 
-> 必須ワークフローの実体(本リポジトリの `.github/workflows/`)を変更する PR にセキュリティチーム(`security`)の承認を必須化するルール。
-> 必須ワークフロー(2.3〜2.4・2.7)は本リポジトリの `main` 上の定義を参照しているため、検知を弱める変更(severity の引き下げ・`exit-code: 0` 化など)が通常の承認(2.2)だけで通ると org 全体の検知が無効化されてしまう
+> 必須ワークフローの実体(本リポジトリの `.github/workflows/` と、そこから使う `.github/actions/`)を変更する PR にセキュリティチーム(`security`)の承認を必須化するルール。
+> 必須ワークフロー(2.3・2.6)は本リポジトリの `main` 上の定義を参照しているため、検知を弱める変更(severity の引き下げ・`exit-code: 0` 化など)が通常の承認(2.2)だけで通ると org 全体の検知が無効化されてしまう
 > Claude ワークフロー(`.github/workflows/claude*.yml`)も呼び出し側の全リポジトリで write 権限付きのプロンプトとして動くため、同じ File patterns(`.github/workflows/**`)で本ルールの対象になる
 
 | 設定項目 | 値                        |
@@ -303,13 +283,16 @@ Rules セクションで以下のチェックを外す:
 File patterns:
 ```
 .github/workflows/**
+.github/actions/**
 ```
+
+※ 必須ワークフローは、検知の処理(ツールのオプション・インライン ignore の禁止など)を composite action(`.github/actions/`)に置き、SHA で参照している。参照する SHA を上げる PR だけでは処理の差分が見えないため、action の変更も対象にする。レビューでは、参照する SHA が main に含まれるコミットであることも確認する
 
 </details>
 
 <details><summary><b>「✏️ スタイルチェック」</b></summary>
 
-> コードのスタイルチェックを必須化するルール。セキュリティ検知(2.3〜2.6)とは性質が異なるため別ルールセットで管理する
+> コードのスタイルチェックを必須化するルール。セキュリティ検知(2.3〜2.5)とは性質が異なるため別ルールセットで管理する
 
 | 設定項目 | 値                        |
 |:-------:|:-------------------------|
@@ -328,28 +311,32 @@ Rules セクションで以下のチェックを外す:
 
 - ✅ **Require workflows to pass before merging** (PRマージ前に指定したワークフローの成功を必須にする) — 「Add workflow」から以下を追加:
 
-| Repository | Branch | Workflow | 検査内容 |
-|:-----------|:-------|:---------|:--------|
-| `github-workflows` | `main` | `.github/workflows/actionlint.yml` | ワークフロー定義の構文 |
-| `github-workflows` | `main` | `.github/workflows/tflint.yml` | Terraform の lint(terraform ruleset の `all` プリセット + aws / google ruleset。設定は全リポジトリ共通で固定) |
-| `github-workflows` | `main` | `.github/workflows/terraform-fmt.yml` | Terraform の書式 |
-| `github-workflows` | `main` | `.github/workflows/terraform.yml` | Terraform の validate・lock ファイルと `required_providers` の整合・test(`*.tftest.hcl`) |
-| `github-workflows` | `main` | `.github/workflows/shellcheck.yml` | シェルスクリプトの lint |
-| `github-workflows` | `main` | `.github/workflows/python.yml` | Python の規約(uv での依存管理)・lint・書式・セキュリティ(ruff の `S` ルール)・型・依存関係 |
-| `github-workflows` | `main` | `.github/workflows/typescript.yml` | TypeScript の規約(Bun での依存管理)・lint・書式・型・未使用パッケージ |
-| `github-workflows` | `main` | `.github/workflows/bundle-size.yml` | フロントエンド(Next.js / Astro)の JS・CSS の gzip 後のサイズの増減を PR にコメント(報告だけで失敗しない) |
+| Repository | Branch | Workflow |
+|:-----------|:-------|:---------|
+| `github-workflows` | `main` | `.github/workflows/style.yml` |
 
-> 必須ワークフローは、対象 repo のコードを実行してよい(`python.yml` / `typescript.yml` の `uv sync` / `bun install` による依存導入と、その環境上で動く Pyright / lint-imports / deptry / Biome / knip / tsc、`terraform.yml` の `terraform init` / `validate` / `test` が実行する provider・module、`bundle-size.yml` の `bun install` とビルドなど)。ただし次を守る。
-> - `permissions` は read のみとし、secrets を使わない(例外: `terraform.yml` の `terraform init` の step にだけ、private の Module Registry(registry.fastship.jp)の読み取りトークン `REGISTRY_TOKEN` を渡す。`bundle-size.yml` の PR にコメントする job にだけ `pull-requests: write` を付ける。この job は checkout せず、PR のコードを動かさない)。トリガーは `pull_request` とし、`pull_request_target` では動かさない
+`style.yml` は次を検査する。常に動くのは `lint` の job だけで、ほかの job は対象のファイルがあるときだけ動く。
+
+| job | 検査内容 |
+|:----|:--------|
+| `lint` | ワークフロー定義の構文(actionlint)・シェルスクリプトの lint(shellcheck)・Terraform の書式(terraform fmt)と lint(tflint。terraform ruleset の `all` プリセット + aws / google ruleset。設定は全リポジトリ共通で固定)・Python の規約(uv での依存管理)・lint・書式・セキュリティ(ruff の `S` ルール) |
+| `terraform` | Terraform の validate・lock ファイルと `required_providers` の整合・test(`*.tftest.hcl`) |
+| `python` | Python の型(Pyright)・モジュールの依存関係(lint-imports)・不要なパッケージ(deptry)。`uv.lock` のあるディレクトリごと |
+| `typescript` | TypeScript の規約(Bun での依存管理)・lint・書式・型・未使用パッケージ |
+| `bundle-size-measure` / `bundle-size-comment` | フロントエンド(Next.js / Astro)の JS・CSS の gzip 後のサイズの増減を PR にコメント(報告だけで失敗しない) |
+
+> 必須ワークフローは、対象 repo のコードを実行してよい(`python` / `typescript` の job の `uv sync` / `bun install` による依存導入と、その環境上で動く Pyright / lint-imports / deptry / Biome / knip / tsc、`terraform` の job の `terraform init` / `validate` / `test` が実行する provider・module、`bundle-size-measure` の job の `bun install` とビルドなど)。ただし次を守る。
+> - `permissions` は read のみとし、secrets を使わない(例外: `terraform` の job の `terraform init` の step にだけ、private の Module Registry(registry.fastship.jp)の読み取りトークン `REGISTRY_TOKEN` を渡す。PR にコメントする `bundle-size-comment` の job にだけ `pull-requests: write` を付ける。この job は checkout せず、PR のコードを動かさない)。トリガーは `pull_request` とし、`pull_request_target` では動かさない
 > - `actions/checkout` は `persist-credentials: false` にする
+> - PR のコードを実行する処理は `lint` と別の job にし、対象のファイルがあるときだけ動かす(常に動く `lint` の job では PR のコードを実行しない)
 > - repo の環境に依存して失敗し得る前提は、下の「導入時の前提」に書く。対応できない repo は「例外運用」で外す
 >
 > この条件なら、PR のコードが動いても、その repo の通常の CI と同じで越えられる権限の境界は無い。
 >
-> `bundle-size.yml` は、PR のコードを動かす計測の job を read のみにし、その結果を artifact で受け取ってコメントする job だけに `pull-requests: write` を付ける。依存パッケージが侵害されても write のトークンは読めず、コメントの投稿先もその PR に固定される。public repo の fork からの PR では、トークンが read のみになるためコメントされない(マージは止めない)。
+> バンドルサイズは、PR のコードを動かす計測の job(`bundle-size-measure`)を read のみにし、その結果を artifact で受け取ってコメントする job だけに `pull-requests: write` を付ける。依存パッケージが侵害されても write のトークンは読めず、コメントの投稿先もその PR に固定される。public repo の fork からの PR では、トークンが read のみになるためコメントされない(マージは止めない)。
 >
 > 検査の対象や厳しさ、src レイアウトの自パッケージの解決は、対象 repo の設定ファイル(`[tool.pyright]` / `pyrightconfig.json` / `[tool.deptry]` / `[build-system]` / `biome.json` / `knip.json` / `tsconfig.json` など)に従う。
-> ただし tflint の設定は `tflint.yml` に埋め込んで固定しており、対象 repo の `.tflint.hcl` とインラインの `tflint-ignore` コメントは使えない。
+> ただし tflint の設定は `style.yml` に埋め込んで固定しており、対象 repo の `.tflint.hcl` とインラインの `tflint-ignore` コメントは使えない。
 
 **導入時の前提** : 次に当てはまる repo は、対応するまで必須チェックが fail する。
 
@@ -360,11 +347,11 @@ Rules セクションで以下のチェックを外す:
 5. ruff の `S` ルール(bandit 相当。`S101` を除く)に違反している(repo の `ignore` では外せない。誤検知は `# noqa: Sxxx` か `per-file-ignores` で個別に外す)
 6. `.terraform.lock.hcl` に linux_amd64 のハッシュが無い(`terraform init -lockfile=readonly` で provider を検証できない。`terraform providers lock -platform=linux_amd64 -platform=darwin_arm64` などで追記する)
 7. `terraform test` がクラウドの認証情報を必要とする(認証情報は渡さないため、`command = plan` と `mock_provider` で完結するテストだけが通る)
-8. Terraform 1.16.0(`terraform.yml` で固定)で動かない `required_version` を宣言している
-9. tflint(`tflint.yml` の固定設定)の違反がある、または `.tf` に `tflint-ignore` コメントがある(違反は変更したディレクトリのみ検査するが、`tflint-ignore` の禁止は repo 全体が対象)
+8. Terraform 1.16.0(`style.yml` で固定)で動かない `required_version` を宣言している
+9. tflint(`style.yml` の固定設定)の違反がある、または `.tf` に `tflint-ignore` コメントがある(違反は変更したディレクトリのみ検査するが、`tflint-ignore` の禁止は repo 全体が対象)
 10. registry.fastship.jp のモジュールを使っているのに、Organization の secret `REGISTRY_TOKEN` へのアクセスが許可されていない(`terraform init` が 401 で失敗する)
 
-`bundle-size.yml` は、サイズが増えても、ビルドの失敗やタイムアウト(40 分)でも fail しないため、前提は無い。ただし次の場合は計測されない、または一部だけが計測される。
+バンドルサイズの計測は、サイズが増えても、ビルドの失敗やタイムアウト(40 分)でも fail しないため、前提は無い。ただし次の場合は計測されない、または一部だけが計測される。
 
 - PR がフロントエンドのディレクトリ配下を変更していない(2 回のビルドを省くため)
 - `package.json` と同じディレクトリに `bun.lock` / `bun.lockb` が無い(workspace の子など)
@@ -386,7 +373,7 @@ Rules セクションで以下のチェックを外す:
 秘密鍵や `.env` などの機密ファイルを、履歴に入る前にサーバー側で拒否する push ルールセット
 (Gitleaks は PR 時の検知のため、検知された時点で秘密情報はリモートの履歴に残っている)。
 ファイル内容に対するコミット前のローカル検知は各リポジトリの git hook(任意運用)が担う。
-2.1〜2.7 とは種類が異なり「**New push ruleset**」から作成する。
+2.1〜2.6 とは種類が異なり「**New push ruleset**」から作成する。
 
 | 設定項目 | 値 |
 |:-------:|:--|
@@ -454,11 +441,11 @@ terraform-linters/setup-tflint@*
 
 ※ 各リポジトリが新しい外部 action を使う場合はこのリストへの追加が必要(SHA ピン留めは各ワークフロー側で行う)。<br/>
 ※ `oven-sh/setup-bun` は `anthropics/claude-code-action` が内部で使用する action のため併せて許可する(「4.」)。<br/>
-※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `python.yml` が使用する。<br/>
-※ `hashicorp/setup-terraform` は `terraform.yml` / `terraform-fmt.yml`、`terraform-linters/setup-tflint` は `tflint.yml` が使用する(「2.」の必須ワークフロー)。<br/>
+※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `style.yml`(「2.」の必須ワークフロー)の Python の検査が使用する。<br/>
+※ `hashicorp/setup-terraform` / `terraform-linters/setup-tflint` は `style.yml`(「2.」の必須ワークフロー)の Terraform の検査が使用する。<br/>
 ※ `google-github-actions/auth` は Workload Identity 連携で Google Cloud に認証する公式 action(各リポジトリの Terraform plan / apply が使用する)。<br/>
 ※ `jdx/mise-action` は app.fastship.jp の CI(`py-check.yml` / `py-test.yml`)が、`mise.toml`・`mise.lock` の版で task・uv などを入れるために使用する(組織の必須ワークフローが効かない個人ユーザーのリポジトリでも CI を動かすため)。<br/>
-※ `preactjs/compressed-size-action` は `bundle-size.yml`(「2.」の必須ワークフロー)が、フロントエンドのバンドルサイズの増減を PR にコメントするために使用する。
+※ `preactjs/compressed-size-action` は `style.yml`(「2.」の必須ワークフロー)が、フロントエンドのバンドルサイズの増減を PR にコメントするために使用する。
 
 </details>
 
@@ -470,7 +457,7 @@ terraform-linters/setup-tflint@*
 | Allow GitHub Actions to create and approve pull requests | ❌(チェックを外す) |
 
 - `permissions:` を明示しているワークフロー(本リポジトリのものを含む)には影響しない
-- 「create and approve pull requests」を無効化することで、`GITHUB_TOKEN` による自己承認で 2.2 / 2.5 / 2.6 の承認必須化が迂回されるのを防ぐ
+- 「create and approve pull requests」を無効化することで、`GITHUB_TOKEN` による自己承認で 2.2 / 2.4 / 2.5 の承認必須化が迂回されるのを防ぐ
 
 </details>
 

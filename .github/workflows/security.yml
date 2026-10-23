@@ -7,7 +7,7 @@ name: "🛡️ セキュリティ検査"
 #    対象の判定は scan job の中で行う。課金は job ごとに切り上げられ、skip された job には掛からないため、
 #    常に動く job は scan だけにする。scan では PR のビルド（RUN）は実行しない（イメージのビルドは scan-image で行う）。
 #    ただしスキャンするイメージの決定（docker buildx build --call=targets）では、Dockerfile の # syntax= が指す
-#    フロントエンドのイメージが BuildKit の中で動く（旧 trivy.yml の detect job と同じ）。
+#    フロントエンドのイメージが BuildKit の中で動く。
 #
 # Trivy の検知ポリシー（MEDIUM 以上 / 修正版がある脆弱性のみ / 検知したら失敗）はここで固定する。
 # repo 側は trivy.yaml の severity で検知を「増やす」ことだけができる。
