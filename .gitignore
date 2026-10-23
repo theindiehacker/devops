@@ -12,7 +12,7 @@
 # Python
 __pycache__/
 
-# Terraform（state には設定の全体が平文で入る。push ルールセットでも *.tfstate は拒否される）
+# Terraform（state には設定の全体が平文で入る。*.tfstate は push ルールセットでも拒否されるが、*.tfstate.backup は拒否されない）
 .terraform/
 *.tfstate
 *.tfstate.*

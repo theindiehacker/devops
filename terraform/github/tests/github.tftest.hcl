@@ -81,6 +81,18 @@ run "Renovate_は_PR_のときだけ承認を_bypass_できる" {
   }
 }
 
+run "検知ワークフローとルールセットの定義の変更には_security_チームの承認が要る" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for pattern in [".github/workflows/**", "terraform/github/**"] :
+      contains(github_organization_ruleset.workflow_change_review.rules[0].pull_request[0].required_reviewers[0].file_patterns, pattern)
+    ])
+    error_message = "必須ワークフローの実体とルールセットの定義は、検知を弱められるため security チームの承認を必須にする"
+  }
+}
+
 run "GITHUB_TOKEN_は_read_で_PR_を承認できない" {
   command = plan
 

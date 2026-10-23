@@ -191,7 +191,8 @@ resource "github_organization_ruleset" "security_config_review" {
 # 必須ワークフローはこの repo の main 上の定義を参照しているため、検知を弱める変更（severity の引き下げ・exit-code: 0 化など）が
 # 通常の承認（pull_request_approval）だけで通ると、org 全体の検知が無効化されてしまう。
 # Claude ワークフロー（.github/workflows/claude*.yml）も呼び出し側の全リポジトリで write 権限付きのプロンプトとして動くため、対象に含まれる。
-# .github/actions/ の composite action はワークフローから SHA で参照しているため、変えるとワークフローの変更も伴う
+# .github/actions/ の composite action はワークフローから SHA で参照しているため、変えるとワークフローの変更も伴う。
+# このルールセット自体の定義（terraform/github/）も、検知を弱められるため対象に含める
 resource "github_organization_ruleset" "workflow_change_review" {
   name        = "🛠️ 検知ワークフロー変更の承認必須化"
   target      = "branch"
@@ -235,7 +236,7 @@ resource "github_organization_ruleset" "workflow_change_review" {
           type = "Team"
         }
         minimum_approvals = 1
-        file_patterns     = [".github/workflows/**"]
+        file_patterns     = [".github/workflows/**", "terraform/github/**"]
       }
     }
   }

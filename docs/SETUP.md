@@ -48,7 +48,7 @@ https://github.com/settings/security を開き、"Two-factor authentication" が
 ## 1. 🏗️ Terraform で設定を反映する
 
 apply は Organization の owner が手元から行う。state は手元のファイル（`terraform/github/terraform.tfstate`）に置く。
-state には設定の全体が平文で入るため、コミットしない（`.gitignore` に入れており、push ルールセットでも拒否される）。
+state には設定の全体が平文で入るため、コミットしない（`.gitignore` に入れている。`*.tfstate` は push ルールセットでも拒否されるが、`*.tfstate.backup` は拒否されない）。
 
 **準備**
 
@@ -87,7 +87,7 @@ security チーム（`teams.tf`）は、Gitleaks や Trivy などがセキュリ
 | ✅ PR の承認を必須化 | 全 repo の default branch | 人間の承認 1 名以上。bypass は Renovate 用 GitHub App（`renovate-<org 名>`。PR のときだけ） |
 | 🛡️ 脆弱性・IaC 設定ミス検知 | 全 repo の default branch | `security.yml` の成功を必須にする |
 | ✔️ セキュリティ設定変更の承認必須化 | 全 repo の default branch | `.gitleaksignore` / `.trivyignore` などの変更に security チームの承認を必須にする |
-| 🛠️ 検知ワークフロー変更の承認必須化 | この repo の default branch | `.github/workflows/**` の変更に security チームの承認を必須にする |
+| 🛠️ 検知ワークフロー変更の承認必須化 | この repo の default branch | `.github/workflows/**`・`terraform/github/**` の変更に security チームの承認を必須にする |
 | ✏️ スタイルチェック | 全 repo の default branch | `style.yml` の成功を必須にする |
 | 🚫 機密ファイルの push 禁止 | 全 repo | `.env`・秘密鍵・`*.tfstate` などの push を拒否する |
 | 🔒 リリースタグの変更禁止 | この repo の `v*` タグ | タグの更新・削除を禁止する（「5.」） |
