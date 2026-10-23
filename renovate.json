@@ -2,11 +2,11 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "customManagers": [
     {
-      "description": "ツール導入 step の VERSION と SHA256 を更新する（SHA256 は release アセットの digest から算出される）。VERSION は引用符付きでも取れる。VERSION には GitHub release のタグ名そのもの（v1.2.3 / bun-v1.2.3 など）を書く。github-release-attachments の digest 解決は VERSION の値でタグを検索するため、extractVersion で v を剥がすと 404 になる（renovatebot/renovate#45674）。versioningTemplate は semver のため、タグが vX.Y.Z 形式でないツールは Bun のように packageRules で versioning を上書きすること（semver として解釈できないタグは invalid-value で黙ってスキップされ、エラーも PR も出ない）",
+      "description": "ツール導入 step の VERSION と SHA256（composite action に渡す with: の version と sha256 / digest も）を更新する（SHA256 は release アセットの digest から算出される）。VERSION は引用符付きでも取れる。VERSION には GitHub release のタグ名そのもの（v1.2.3 / bun-v1.2.3 など）を書く。github-release-attachments の digest 解決は VERSION の値でタグを検索するため、extractVersion で v を剥がすと 404 になる（renovatebot/renovate#45674）。versioningTemplate は semver のため、タグが vX.Y.Z 形式でないツールは Bun のように packageRules で versioning を上書きすること（semver として解釈できないタグは invalid-value で黙ってスキップされ、エラーも PR も出ない）",
       "customType": "regex",
       "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.yml$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>[a-zA-Z0-9-._]+?) depName=(?<depName>[^\\s]+?)\\s+(?:(?:[A-Z0-9_]+_)?VERSION|[a-z0-9_]*_version):\\s*\"?(?<currentValue>[^\\s\"]+)\"?\\s+(?:(?:[A-Z0-9_]+_)?SHA256|checksums):\\s*(?<currentDigest>\\S+)"
+        "# renovate: datasource=(?<datasource>[a-zA-Z0-9-._]+?) depName=(?<depName>[^\\s]+?)\\s+(?:(?:[A-Z0-9_]+_)?VERSION|(?:[a-z0-9_]+_)?version):\\s*\"?(?<currentValue>[^\\s\"]+)\"?\\s+(?:(?:[A-Z0-9_]+_)?SHA256|sha256|digest|checksums):\\s*(?<currentDigest>\\S+)"
       ],
       "versioningTemplate": "semver"
     },
@@ -30,9 +30,9 @@
       "versioningTemplate": "pep440"
     },
     {
-      "description": "tflint.yml に埋め込んだ tflint 設定の plugin version を GitHub Releases の最新版に更新する（タグは v 付き、設定には v を除いて書く）",
+      "description": "style.yml に埋め込んだ tflint 設定の plugin version を GitHub Releases の最新版に更新する（タグは v 付き、設定には v を除いて書く）",
       "customType": "regex",
-      "managerFilePatterns": ["/^\\.github/workflows/tflint\\.yml$/"],
+      "managerFilePatterns": ["/^\\.github/workflows/style\\.yml$/"],
       "matchStrings": [
         "version\\s*=\\s*\"(?<currentValue>[^\"]+)\"\\s+source\\s*=\\s*\"github\\.com/(?<depName>[^\"]+)\""
       ],

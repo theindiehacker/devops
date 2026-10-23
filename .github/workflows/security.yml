@@ -1,0 +1,279 @@
+name: "🛡️ セキュリティ検査"
+
+# 全 repo に適用する必須ワークフロー。PR ごとに、シークレット・GitHub Actions の設定・アプリケーションコード・
+# 依存パッケージと IaC・Dockerfile からビルドしたイメージを検査する。
+#
+# ⚠️ 必須ワークフローは on: のフィルタ（paths / branches / types 等）が無視され全 PR で起動されるため、
+#    対象の判定は scan job の中で行う。課金は job ごとに切り上げられ、skip された job には掛からないため、
+#    常に動く job は scan だけにする。scan では PR のコードを実行しない（イメージのビルドは scan-image で行う）。
+#
+# Trivy の検知ポリシー（MEDIUM 以上 / 修正版がある脆弱性のみ / 検知したら失敗）はここで固定する。
+# repo 側は trivy.yaml の severity で検知を「増やす」ことだけができる。
+# 抑制は承認必須の .trivyignore / .trivyignore.yaml だけで行い、インライン ignore は禁止する。
+#
+# Required workflow は inputs を受け取れないため、イメージのビルド方法は規約で決める:
+#   - .github/trivy-image.yml があれば、列挙された image だけをビルドする
+#   - 無ければ Dockerfile / Dockerfile.* / *.Dockerfile を自動検出し、置き場所を build context に、
+#     最終ステージ（ほかのステージから FROM・COPY --from・RUN --mount の from= で使われないステージ）をすべて target にする。
+#     最後のステージ（ビルドの既定）は必ず含める
+#   （決め方は .github/actions/trivy-images）
+#
+# .github/trivy-image.yml の書式（ビルドに secrets が必要な repo は images: [] で opt-out する）:
+#   images:
+#     - dockerfile: backend/Dockerfile  # 必須。repo ルートからの相対パス
+#       context: backend                # 任意。省略時は dockerfile のあるディレクトリ
+#       target: api                     # 任意。multi-stage のビルド対象ステージ
+#       build-args:                     # 任意
+#         INFRASTRUCTURE: gcp
+#
+# 必須ワークフローは対象 repo で動くため、この repo の action はパスではなく SHA で参照する
+# （action を変えたら、uses の SHA も上げる）
+
+# main への直 push はルールセットで禁止されているため、PR だけを対象にする
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+# 同じ PR で新しい push があれば、古い run をキャンセルする。
+# concurrency group は repo 内の全 workflow で共有されるため、各 repo の workflow と重ならないよう github-workflows- を付ける
+concurrency:
+  group: github-workflows-security-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: "シークレット・設定・コード・依存パッケージをスキャン"
+    runs-on: ubuntu-latest
+    timeout-minutes: 75  # step の timeout の合計より長くする
+    permissions:
+      contents: read
+      pull-requests: read  # paths-filter の変更ファイル一覧取得に必要
+    outputs:
+      severity: ${{ steps.policy.outputs.severity }}
+      trivyignores: ${{ steps.policy.outputs.trivyignores }}
+      images: ${{ steps.images.outputs.images || '[]' }}
+    steps:
+      - name: "スキャン対象を判定"
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
+        with:
+          list-files: json
+          # 削除のみの変更は残りのファイルの結果を変えず、削除ファイルはスキャンもできないため対象外
+          # （rename は added + deleted に分解され新パス側が対象になる）
+          filters: |
+            # 設定ファイルはポリシーの除外設定に影響するため対象（ghalint の自動探索パス ^(\.|\.github/)?ghalint\.ya?ml$ をすべて列挙）
+            ghalint:
+              - added|modified|copied: ".github/workflows/*.yml"
+              - added|modified|copied: ".github/workflows/*.yaml"
+              - added|modified|copied: "ghalint.yml"
+              - added|modified|copied: "ghalint.yaml"
+              - added|modified|copied: ".ghalint.yml"
+              - added|modified|copied: ".ghalint.yaml"
+              - added|modified|copied: ".github/ghalint.yml"
+              - added|modified|copied: ".github/ghalint.yaml"
+            zizmor_config:
+              - added|modified|copied: ".github/zizmor.yml"
+            # .github/actions/zizmor の pathspecs と揃えること
+            zizmor_targets:
+              - added|modified|copied: ".github/workflows/*.yml"
+              - added|modified|copied: ".github/workflows/*.yaml"
+              - added|modified|copied: "action.yml"
+              - added|modified|copied: "action.yaml"
+              - added|modified|copied: "**/action.yml"
+              - added|modified|copied: "**/action.yaml"
+              # zizmor はファイル名だけで判定し任意のディレクトリから収集するため、直下に限定しない
+              - added|modified|copied: "**/dependabot.yml"
+              - added|modified|copied: "**/dependabot.yaml"
+              - added|modified|copied: "**/.pre-commit-config.yaml"
+              - added|modified|copied: "**/.pre-commit-config.yml"
+              - added|modified|copied: "**/.pre-commit-hooks.yaml"
+              - added|modified|copied: "**/.pre-commit-hooks.yml"
+
+      - name: "Checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # gitleaks（base..head）と semgrep（--baseline-commit）がマージ先のコミットを参照する
+          persist-credentials: false
+
+      # 以降の各ツールは !cancelled() で暗黙の success() を外し、前のツールが失敗しても全ツールの結果を 1 run で出す。
+      # 検査の出力は、後のツールが作業ツリーで拾わないよう runner.temp に書く
+
+      - name: "🔑 Gitleaks"
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        uses: theindiehacker/github-workflows/.github/actions/gitleaks@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        with:
+          # renovate: datasource=github-release-attachments depName=gitleaks/gitleaks
+          version: v8.30.1
+          sha256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+          # PR の base..head 差分のみスキャン
+          log-opts: ${{ format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) }}
+
+      - name: "🛡️ ghalint"
+        if: ${{ !cancelled() && steps.filter.outputs.ghalint == 'true' }}
+        timeout-minutes: 5
+        uses: theindiehacker/github-workflows/.github/actions/ghalint@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        with:
+          # renovate: datasource=github-release-attachments depName=suzuki-shunsuke/ghalint
+          version: v1.5.6
+          sha256: 98ee0e3330de7286f470d1e89c03ff7ce70d7a5998ba0f15969c400447be579c
+
+      - name: "🛡️ zizmor"
+        if: ${{ !cancelled() && (steps.filter.outputs.zizmor_config == 'true' || steps.filter.outputs.zizmor_targets == 'true') }}
+        timeout-minutes: 10
+        uses: theindiehacker/github-workflows/.github/actions/zizmor@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        with:
+          # renovate: datasource=github-release-attachments depName=zizmorcore/zizmor
+          version: v1.31.1
+          sha256: d185f726bdaf92df78273217dfdd24ebcd6b0ef48cf3ce776ff5762b6e138c99
+          # 設定ファイルは全ファイルの検出結果に影響するため、変更時は repo 全体をスキャン
+          scan-all: ${{ steps.filter.outputs.zizmor_config }}
+          targets: ${{ steps.filter.outputs.zizmor_targets_files }}
+          github-token: ${{ github.token }}
+
+      - name: "🛡️ Semgrep"
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        uses: theindiehacker/github-workflows/.github/actions/semgrep@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        with:
+          # renovate: datasource=docker depName=semgrep/semgrep
+          version: 1.175.0
+          digest: sha256:51c9f53a4fce0d55e9abd08d7b96968654248a4b1122e77f20e0a49c0072446c
+          baseline: ${{ github.event.pull_request.base.sha }}
+
+      - name: "Trivy の検知する severity / 抑制ファイルを決定"
+        id: policy
+        if: ${{ !cancelled() }}
+        uses: theindiehacker/github-workflows/.github/actions/trivy-policy@0d9da480ecb4e568182441ac8a1e8248aef0b803
+
+      - name: "Trivy のインライン ignore コメントの禁止"
+        # Trivy にはインライン ignore を無効化するオプションが無いため、コメント自体を禁止する。
+        # tfsec 互換の接頭辞も Trivy は ignore として扱うので両方を対象にする。
+        # トークンを分割しているのは、このファイル自身が検知されるのを防ぐため
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN='(trivy|tfsec):''ignore'
+          if git grep -InE "${TOKEN}" -- .; then
+            echo "::error::インライン ignore コメント（trivy / tfsec の ignore トークン）は使用できません。.trivyignore / .trivyignore.yaml で抑制してください（変更にはセキュリティチームの承認が必要）"
+            exit 1
+          fi
+
+      - name: "🛡️ Trivy fs スキャン"
+        id: trivy-fs
+        if: ${{ !cancelled() && steps.policy.outcome == 'success' }}
+        timeout-minutes: 10  # Trivy DB のダウンロード遅延でハングするのを防ぐ
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        # env と検知ポリシーはアンカー（&trivy-*）で定義し、scan-image から同じ値を参照する
+        env: &trivy-db-env
+          # 必須ワークフローがレジストリのレート制限で落ちないよう、公式配布先 3 箇所をフォールバック指定する
+          TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
+          TRIVY_JAVA_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1,public.ecr.aws/aquasecurity/trivy-java-db:1
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: &trivy-scanners vuln,misconfig
+          severity: ${{ steps.policy.outputs.severity }}
+          ignore-unfixed: &trivy-ignore-unfixed true  # 修正版が無い脆弱性は除外する
+          exit-code: &trivy-exit-code 1
+          trivyignores: ${{ steps.policy.outputs.trivyignores }}
+          # GHAS が無く SARIF を使えないため JSON で出力し、次の step で表にして表示する
+          format: json
+          output: ${{ runner.temp }}/trivy-fs.json
+
+      - name: "Trivy fs スキャンの結果を表示"
+        # Trivy が検知して失敗しても結果は表示する
+        if: ${{ !cancelled() && steps.trivy-fs.outcome != 'skipped' }}
+        shell: bash
+        run: trivy convert --format table "${RUNNER_TEMP}/trivy-fs.json" | tee "${RUNNER_TEMP}/trivy-fs.txt"
+
+      - name: "Trivy fs スキャンの結果を artifact に保存"
+        # log の保持期間が切れても後から調べられるようにする
+        if: ${{ !cancelled() && steps.trivy-fs.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: trivy-fs
+          path: |
+            ${{ runner.temp }}/trivy-fs.txt
+            ${{ runner.temp }}/trivy-fs.json
+          retention-days: 30
+
+      - name: "Trivy でスキャンするイメージを決定"
+        id: images
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        uses: theindiehacker/github-workflows/.github/actions/trivy-images@0d9da480ecb4e568182441ac8a1e8248aef0b803
+
+  scan-image:
+    name: "イメージをスキャン (${{ matrix.label }})"
+    needs: scan
+    # scan で違反が出ても同じ run でイメージの結果を出す。
+    # 空の matrix は job エラーになるため、対象 0 件なら skip する（skip は run の成功として扱われる）
+    if: ${{ !cancelled() && needs.scan.outputs.images != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30  # docker build を含むため fs スキャンより長めに取る
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.scan.outputs.images) }}
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "Buildx をセットアップ"
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+
+      - name: "イメージをビルド"
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}          # 空なら無視される
+          build-args: ${{ matrix.build_args }}  # 空なら無視される
+          push: false
+          load: true  # スキャンできるよう docker daemon に読み込む
+          tags: localbuild/trivy-scan:latest
+          provenance: false  # attestation 付きのイメージは load できないため無効化
+          # 同じ PR 内の再ビルドを速くする。main では run しないため cache は他の PR と共有されない。
+          # repo の cache 枠を圧迫しないよう、中間ステージまで保存する mode=max は使わない
+          cache-from: type=gha,scope=trivy-image-${{ matrix.suffix }}
+          cache-to: type=gha,mode=min,scope=trivy-image-${{ matrix.suffix }}
+
+      - name: "Trivy image スキャン"
+        id: trivy-image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        env: *trivy-db-env
+        with:
+          scan-type: image
+          image-ref: localbuild/trivy-scan:latest
+          scanners: *trivy-scanners
+          severity: ${{ needs.scan.outputs.severity }}
+          ignore-unfixed: *trivy-ignore-unfixed
+          exit-code: *trivy-exit-code
+          trivyignores: ${{ needs.scan.outputs.trivyignores }}
+          format: json
+          output: ${{ runner.temp }}/trivy-image.json
+
+      - name: "Trivy image スキャンの結果を表示"
+        # Trivy が検知して失敗しても結果は表示する
+        if: ${{ !cancelled() && steps.trivy-image.outcome != 'skipped' }}
+        shell: bash
+        run: trivy convert --format table "${RUNNER_TEMP}/trivy-image.json" | tee "${RUNNER_TEMP}/trivy-image.txt"
+
+      - name: "Trivy image スキャンの結果を artifact に保存"
+        # log の保持期間が切れても後から調べられるようにする
+        if: ${{ !cancelled() && steps.trivy-image.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: trivy-image-${{ matrix.suffix }}
+          path: |
+            ${{ runner.temp }}/trivy-image.txt
+            ${{ runner.temp }}/trivy-image.json
+          retention-days: 30
