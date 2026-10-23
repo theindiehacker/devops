@@ -51,7 +51,6 @@ jobs:
       python_projects: ${{ steps.python.outputs.projects || '[]' }}
       python_nested: ${{ steps.python.outputs.nested || '{}' }}
       python_importlinters: ${{ steps.python.outputs.importlinters || '[]' }}
-      typescript: ${{ steps.typescript.outputs.roots != '' && steps.typescript.outputs.roots != '[]' }}
       typescript_roots: ${{ steps.typescript.outputs.roots || '[]' }}
       typescript_tsconfigs: ${{ steps.typescript.outputs.tsconfigs || '[]' }}
       typescript_nextjs: ${{ steps.typescript.outputs.nextjs || '[]' }}
@@ -142,26 +141,29 @@ jobs:
           # バンドルサイズの計測対象の判定が、マージコミットの親（マージ先）との差分を git diff で調べる
           fetch-depth: 2
 
+      # 判定も !cancelled() で動かし、1 つの判定の失敗でほかの検査の対象が決まらなくならないようにする
+
       - name: "Python の検査対象を割り当てる"
         id: python
-        if: steps.filter.outputs.python == 'true'
-        uses: theindiehacker/github-workflows/.github/actions/python-targets@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        if: ${{ !cancelled() && steps.filter.outputs.python == 'true' }}
+        uses: theindiehacker/github-workflows/.github/actions/python-targets@a7539182106264f76d6627b37d8eed62cc60cff2
 
       - name: "TypeScript の検査対象を収集"
         id: typescript
-        if: steps.filter.outputs.typescript == 'true'
-        uses: theindiehacker/github-workflows/.github/actions/typescript-targets@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        if: ${{ !cancelled() && steps.filter.outputs.typescript == 'true' }}
+        uses: theindiehacker/github-workflows/.github/actions/typescript-targets@a7539182106264f76d6627b37d8eed62cc60cff2
 
       - name: "バンドルサイズの計測対象を判定"
         id: bundle-size
-        uses: theindiehacker/github-workflows/.github/actions/bundle-size-targets@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        if: ${{ !cancelled() }}
+        uses: theindiehacker/github-workflows/.github/actions/bundle-size-targets@a7539182106264f76d6627b37d8eed62cc60cff2
 
       # 以降の各ツールは !cancelled() で暗黙の success() を外し、前のツールが失敗しても全ツールの結果を 1 run で出す
 
       - name: "🧹 actionlint"
         if: ${{ !cancelled() && steps.filter.outputs.actionlint == 'true' }}
         timeout-minutes: 5
-        uses: theindiehacker/github-workflows/.github/actions/actionlint@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/actionlint@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           # renovate: datasource=github-release-attachments depName=rhysd/actionlint
           version: v1.7.12
@@ -170,7 +172,7 @@ jobs:
       - name: "🐚 shellcheck"
         if: ${{ !cancelled() && steps.filter.outputs.shellcheck == 'true' }}
         timeout-minutes: 5
-        uses: theindiehacker/github-workflows/.github/actions/shellcheck@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/shellcheck@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           # renovate: datasource=github-release-attachments depName=koalaman/shellcheck
           version: v0.11.0
@@ -189,7 +191,7 @@ jobs:
       - name: "🏗️ terraform fmt"
         if: ${{ !cancelled() && steps.filter.outputs.terraform_fmt == 'true' }}
         timeout-minutes: 5
-        uses: theindiehacker/github-workflows/.github/actions/terraform-fmt@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/terraform-fmt@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           files: ${{ steps.filter.outputs.terraform_fmt_files }}
 
@@ -205,7 +207,7 @@ jobs:
       - name: "🏗️ tflint"
         if: ${{ !cancelled() && steps.filter.outputs.tflint == 'true' }}
         timeout-minutes: 10
-        uses: theindiehacker/github-workflows/.github/actions/tflint@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/tflint@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           files: ${{ steps.filter.outputs.tflint_files }}
           github-token: ${{ github.token }}
@@ -235,7 +237,7 @@ jobs:
       - name: "📜 Python の規約を検査"
         if: ${{ !cancelled() && steps.python.outcome == 'success' }}
         timeout-minutes: 5
-        uses: theindiehacker/github-workflows/.github/actions/python-rule@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/python-rule@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           pyprojects: ${{ steps.python.outputs.pyprojects }}
           importlinters: ${{ steps.python.outputs.importlinters }}
@@ -289,7 +291,7 @@ jobs:
       # モジュールだけを変えた PR で examples が壊れても検知できるようにする）
       - name: "検査対象を収集"
         id: dirs
-        uses: theindiehacker/github-workflows/.github/actions/terraform-dirs@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/terraform-dirs@a7539182106264f76d6627b37d8eed62cc60cff2
 
       - name: "Setup terraform"
         if: steps.dirs.outputs.dirs != '[]'
@@ -310,18 +312,18 @@ jobs:
       - name: "terraform init"
         id: init
         if: steps.dirs.outputs.dirs != '[]'
-        uses: theindiehacker/github-workflows/.github/actions/terraform-init@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/terraform-init@a7539182106264f76d6627b37d8eed62cc60cff2
         env:
-          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
           # terraform はこのホストへのリクエストにだけトークンを付ける。secret が無い repo では空になり、registry を使わない repo には影響しない
           TF_TOKEN_registry_fastship_jp: ${{ secrets.REGISTRY_TOKEN }}
         with:
           dirs: ${{ steps.dirs.outputs.dirs }}
+          plugin-cache-dir: ${{ runner.temp }}/terraform-plugin-cache
 
       - name: "terraform validate"
         # init が失敗しても、init できたディレクトリは validate する
         if: ${{ !cancelled() && steps.init.outcome != 'skipped' }}
-        uses: theindiehacker/github-workflows/.github/actions/each-dir@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/each-dir@a7539182106264f76d6627b37d8eed62cc60cff2
         env:
           TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
         with:
@@ -331,7 +333,7 @@ jobs:
       - name: "terraform test"
         # init / validate が失敗しても、init できたディレクトリのテストは実行する
         if: ${{ !cancelled() && steps.init.outcome != 'skipped' }}
-        uses: theindiehacker/github-workflows/.github/actions/terraform-test@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/terraform-test@a7539182106264f76d6627b37d8eed62cc60cff2
         env:
           TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
         with:
@@ -390,7 +392,7 @@ jobs:
 
       - name: "🧱 Pyright - 型チェック"
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
-        uses: theindiehacker/github-workflows/.github/actions/pyright@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/pyright@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           version: ${{ env.PYRIGHT_VERSION }}
           project: ${{ matrix.project }}
@@ -398,7 +400,7 @@ jobs:
 
       - name: "➡️ lint-imports - モジュール依存関係を検査"
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
-        uses: theindiehacker/github-workflows/.github/actions/lint-imports@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/lint-imports@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           version: ${{ env.IMPORT_LINTER_VERSION }}
           project: ${{ matrix.project }}
@@ -406,7 +408,7 @@ jobs:
 
       - name: "🗑️ deptry - 不要なパッケージを検知"
         if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
-        uses: theindiehacker/github-workflows/.github/actions/deptry@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/deptry@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           version: ${{ env.DEPTRY_VERSION }}
           project: ${{ matrix.project }}
@@ -416,7 +418,7 @@ jobs:
     name: "TypeScript を検査"
     needs: lint
     # lint で違反が出ても、同じ run で結果を出す
-    if: ${{ !cancelled() && needs.lint.outputs.typescript == 'true' }}
+    if: ${{ !cancelled() && needs.lint.outputs.typescript_roots != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -429,7 +431,7 @@ jobs:
 
       # bun 本体は対象 repo の指定ではなく中央で固定する（bundle-size-measure も同じ値を使う）
       - name: "Install bun"
-        uses: theindiehacker/github-workflows/.github/actions/install-bun@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/install-bun@a7539182106264f76d6627b37d8eed62cc60cff2
         with: &bun
           # renovate: datasource=github-release-attachments depName=oven-sh/bun
           version: bun-v1.4.3
@@ -439,7 +441,7 @@ jobs:
       # 1 回の run で全ての違反が出揃う
       - name: "bun install"
         id: install
-        uses: theindiehacker/github-workflows/.github/actions/each-dir@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/each-dir@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           dirs: ${{ needs.lint.outputs.typescript_roots }}
           run: bun install --frozen-lockfile
@@ -447,7 +449,7 @@ jobs:
       - name: "biome ci"
         # 検出箇所を PR に annotation 表示する（--reporter=github）
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        uses: theindiehacker/github-workflows/.github/actions/each-dir@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/each-dir@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           dirs: ${{ needs.lint.outputs.typescript_roots }}
           run: bun run biome ci --reporter=github .
@@ -455,7 +457,7 @@ jobs:
       - name: "knip"
         # 未使用パッケージの検知に絞る（unused files / exports は対象外）
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        uses: theindiehacker/github-workflows/.github/actions/each-dir@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/each-dir@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           dirs: ${{ needs.lint.outputs.typescript_roots }}
           run: bun run knip --dependencies
@@ -464,14 +466,14 @@ jobs:
         # Next.js はルートの型 (LayoutProps・PageProps など) と next-env.d.ts を生成し、生成物は gitignore する。
         # Next.js 公式の CI での型チェック (next typegen && tsc --noEmit) に合わせ、tsc の前に生成する
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        uses: theindiehacker/github-workflows/.github/actions/each-dir@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/each-dir@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           dirs: ${{ needs.lint.outputs.typescript_nextjs }}
           run: bun run next typegen
 
       - name: "tsc"
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        uses: theindiehacker/github-workflows/.github/actions/each-dir@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/each-dir@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           dirs: ${{ needs.lint.outputs.typescript_tsconfigs }}
           run: bun run tsc --noEmit
@@ -518,7 +520,7 @@ jobs:
 
       - name: "Install bun"
         timeout-minutes: 5
-        uses: theindiehacker/github-workflows/.github/actions/install-bun@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/install-bun@a7539182106264f76d6627b37d8eed62cc60cff2
         with: *bun
 
       # トークンは read のみのため、action による PR へのコメントは失敗する（ログのエラーは想定どおり）。
@@ -575,7 +577,7 @@ jobs:
 
       - name: "PR にコメント"
         timeout-minutes: 5
-        uses: theindiehacker/github-workflows/.github/actions/bundle-size-comment@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/bundle-size-comment@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           targets: ${{ needs.lint.outputs.bundle_size_targets }}
           results: ${{ runner.temp }}/results

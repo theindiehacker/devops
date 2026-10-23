@@ -5,7 +5,9 @@ name: "🛡️ セキュリティ検査"
 #
 # ⚠️ 必須ワークフローは on: のフィルタ（paths / branches / types 等）が無視され全 PR で起動されるため、
 #    対象の判定は scan job の中で行う。課金は job ごとに切り上げられ、skip された job には掛からないため、
-#    常に動く job は scan だけにする。scan では PR のコードを実行しない（イメージのビルドは scan-image で行う）。
+#    常に動く job は scan だけにする。scan では PR のビルド（RUN）は実行しない（イメージのビルドは scan-image で行う）。
+#    ただしスキャンするイメージの決定（docker buildx build --call=targets）では、Dockerfile の # syntax= が指す
+#    フロントエンドのイメージが BuildKit の中で動く（旧 trivy.yml の detect job と同じ）。
 #
 # Trivy の検知ポリシー（MEDIUM 以上 / 修正版がある脆弱性のみ / 検知したら失敗）はここで固定する。
 # repo 側は trivy.yaml の severity で検知を「増やす」ことだけができる。
@@ -103,7 +105,7 @@ jobs:
       - name: "🔑 Gitleaks"
         if: ${{ !cancelled() }}
         timeout-minutes: 15
-        uses: theindiehacker/github-workflows/.github/actions/gitleaks@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/gitleaks@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           # renovate: datasource=github-release-attachments depName=gitleaks/gitleaks
           version: v8.30.1
@@ -114,7 +116,7 @@ jobs:
       - name: "🛡️ ghalint"
         if: ${{ !cancelled() && steps.filter.outputs.ghalint == 'true' }}
         timeout-minutes: 5
-        uses: theindiehacker/github-workflows/.github/actions/ghalint@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/ghalint@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           # renovate: datasource=github-release-attachments depName=suzuki-shunsuke/ghalint
           version: v1.5.6
@@ -123,7 +125,7 @@ jobs:
       - name: "🛡️ zizmor"
         if: ${{ !cancelled() && (steps.filter.outputs.zizmor_config == 'true' || steps.filter.outputs.zizmor_targets == 'true') }}
         timeout-minutes: 10
-        uses: theindiehacker/github-workflows/.github/actions/zizmor@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/zizmor@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           # renovate: datasource=github-release-attachments depName=zizmorcore/zizmor
           version: v1.31.1
@@ -136,17 +138,17 @@ jobs:
       - name: "🛡️ Semgrep"
         if: ${{ !cancelled() }}
         timeout-minutes: 15
-        uses: theindiehacker/github-workflows/.github/actions/semgrep@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/semgrep@a7539182106264f76d6627b37d8eed62cc60cff2
         with:
           # renovate: datasource=docker depName=semgrep/semgrep
-          version: 1.175.0
+          version: 1.175.1
           digest: sha256:51c9f53a4fce0d55e9abd08d7b96968654248a4b1122e77f20e0a49c0072446c
           baseline: ${{ github.event.pull_request.base.sha }}
 
       - name: "Trivy の検知する severity / 抑制ファイルを決定"
         id: policy
         if: ${{ !cancelled() }}
-        uses: theindiehacker/github-workflows/.github/actions/trivy-policy@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/trivy-policy@a7539182106264f76d6627b37d8eed62cc60cff2
 
       - name: "Trivy のインライン ignore コメントの禁止"
         # Trivy にはインライン ignore を無効化するオプションが無いため、コメント自体を禁止する。
@@ -188,7 +190,10 @@ jobs:
         # Trivy が検知して失敗しても結果は表示する
         if: ${{ !cancelled() && steps.trivy-fs.outcome != 'skipped' }}
         shell: bash
-        run: trivy convert --format table "${RUNNER_TEMP}/trivy-fs.json" | tee "${RUNNER_TEMP}/trivy-fs.txt"
+        # Trivy が JSON を書く前に失敗したとき（DB の取得の失敗など）は、原因を埋もれさせないよう何もしない
+        run: |
+          [ -s "${RUNNER_TEMP}/trivy-fs.json" ] || exit 0
+          trivy convert --format table "${RUNNER_TEMP}/trivy-fs.json" | tee "${RUNNER_TEMP}/trivy-fs.txt"
 
       - name: "Trivy fs スキャンの結果を artifact に保存"
         # log の保持期間が切れても後から調べられるようにする
@@ -199,20 +204,21 @@ jobs:
           path: |
             ${{ runner.temp }}/trivy-fs.txt
             ${{ runner.temp }}/trivy-fs.json
+          if-no-files-found: ignore
           retention-days: 30
 
       - name: "Trivy でスキャンするイメージを決定"
         id: images
         if: ${{ !cancelled() }}
         timeout-minutes: 5
-        uses: theindiehacker/github-workflows/.github/actions/trivy-images@0d9da480ecb4e568182441ac8a1e8248aef0b803
+        uses: theindiehacker/github-workflows/.github/actions/trivy-images@a7539182106264f76d6627b37d8eed62cc60cff2
 
   scan-image:
     name: "イメージをスキャン (${{ matrix.label }})"
     needs: scan
-    # scan で違反が出ても同じ run でイメージの結果を出す。
+    # scan で違反が出ても同じ run でイメージの結果を出す。ただし検知ポリシーを決められなかったとき（scan は失敗している）は動かさない。
     # 空の matrix は job エラーになるため、対象 0 件なら skip する（skip は run の成功として扱われる）
-    if: ${{ !cancelled() && needs.scan.outputs.images != '[]' }}
+    if: ${{ !cancelled() && needs.scan.outputs.severity != '' && needs.scan.outputs.images != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30  # docker build を含むため fs スキャンより長めに取る
     permissions:
@@ -265,7 +271,10 @@ jobs:
         # Trivy が検知して失敗しても結果は表示する
         if: ${{ !cancelled() && steps.trivy-image.outcome != 'skipped' }}
         shell: bash
-        run: trivy convert --format table "${RUNNER_TEMP}/trivy-image.json" | tee "${RUNNER_TEMP}/trivy-image.txt"
+        # Trivy が JSON を書く前に失敗したとき（DB の取得の失敗など）は、原因を埋もれさせないよう何もしない
+        run: |
+          [ -s "${RUNNER_TEMP}/trivy-image.json" ] || exit 0
+          trivy convert --format table "${RUNNER_TEMP}/trivy-image.json" | tee "${RUNNER_TEMP}/trivy-image.txt"
 
       - name: "Trivy image スキャンの結果を artifact に保存"
         # log の保持期間が切れても後から調べられるようにする
@@ -276,4 +285,5 @@ jobs:
           path: |
             ${{ runner.temp }}/trivy-image.txt
             ${{ runner.temp }}/trivy-image.json
+          if-no-files-found: ignore
           retention-days: 30
