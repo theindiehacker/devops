@@ -164,6 +164,7 @@ resource "github_organization_ruleset" "security_config_review" {
         #   .semgrepignore も有効になるため対象に含める
         # - zizmor の設定はワークフロー側（.github/actions/zizmor の --config / --no-config）で .github/zizmor.yml に固定しているため、
         #   自動探索され得る他パス（リポジトリ直下の zizmor.yml 等）の列挙は不要
+        # - GitHub の上限は 15 件（超えると apply が 422 で失敗する）。拡張子の yml / yaml は y*ml でまとめる
         file_patterns = [
           ".gitleaksignore",
           ".gitleaks.toml",
@@ -175,12 +176,9 @@ resource "github_organization_ruleset" "security_config_review" {
           ".github/zizmor.yml",
           ".semgrepignore",
           "**/.semgrepignore",
-          "ghalint.yml",
-          "ghalint.yaml",
-          ".ghalint.yml",
-          ".ghalint.yaml",
-          ".github/ghalint.yml",
-          ".github/ghalint.yaml",
+          "ghalint.y*ml",
+          ".ghalint.y*ml",
+          ".github/ghalint.y*ml",
         ]
       }
     }
