@@ -1,0 +1,20 @@
+name: "Python の規約を検査"
+description: "uv（pyproject.toml と uv.lock）で依存を管理しているかを、git 上のファイルだけを見て検査する（対象 repo のコードは動かさない）"
+
+inputs:
+  pyprojects:
+    description: "python-targets の出力 pyprojects"
+    required: true
+  importlinters:
+    description: "python-targets の出力 importlinters"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: "uv で依存を管理しているか"
+      shell: bash
+      env:
+        PYPROJECTS: ${{ inputs.pyprojects }}
+        IMPORTLINTERS: ${{ inputs.importlinters }}
+      run: bash "${GITHUB_ACTION_PATH}/python-rule.sh"

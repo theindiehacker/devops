@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# GitHub Actions のワークフロー / action 定義（と zizmor が収集する dependabot.yml / pre-commit 設定）を zizmor で静的解析し、
+# severity HIGH 以上の検出で失敗する
+set -euo pipefail
+
+# zizmor がスキャンする種類（`zizmor .` の収集対象と同じ: workflow / action / dependabot / pre-commit。後者 2 つは
+# ファイル名だけで判定され任意のディレクトリから収集される）の git pathspec。
+# インライン ignore 禁止と全体スキャンの列挙で共用する（security.yml の paths-filter の zizmor_targets とも揃えること）
+pathspecs=(
+  ':(glob).github/workflows/*.yml' ':(glob).github/workflows/*.yaml' ':(glob)**/action.yml' ':(glob)**/action.yaml'
+  ':(glob)**/dependabot.yml' ':(glob)**/dependabot.yaml'
+  ':(glob)**/.pre-commit-config.yaml' ':(glob)**/.pre-commit-config.yml' ':(glob)**/.pre-commit-hooks.yaml' ':(glob)**/.pre-commit-hooks.yml'
+)
+
+# zizmor の --no-ignores は承認必須の .github/zizmor.yml による抑制まで無効化してしまうため、
+# インラインコメントのトークンの存在自体を禁止する（抑制は .github/zizmor.yml に限定する）。
+# 検査対象は zizmor がスキャンし得るファイルのみ（ドキュメント等の誤検知を避ける）
+if git grep -InE 'zizmor:[[:space:]]*ignore' -- "${pathspecs[@]}"; then
+  echo "::error::インラインの ignore コメントは使用できません。.github/zizmor.yml で抑制してください（変更にはセキュリティチームの承認が必要）"
+  exit 1
+fi
+
+archive="${RUNNER_TEMP}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+curl -sSfL -o "${archive}" "https://github.com/zizmorcore/zizmor/releases/download/${VERSION}/${archive##*/}"
+
+# SHA-256 検証（改ざん・破損を検知）
+echo "${SHA256}  ${archive}" | sha256sum -c -
+
+sudo tar -xz -C /usr/local/bin -f "${archive}" zizmor
+zizmor --version
+
+# 設定ファイルの自動探索はリポジトリ直下や入力ファイルの祖先ディレクトリの zizmor.yml / zizmor.yaml
+# にも及び、承認必須（「✔️ セキュリティ設定変更の承認必須化」）の対象外パスから検出を抑制できてしまうため、
+# 承認必須の .github/zizmor.yml に固定する（未作成なら設定なしで実行する）
+config_args=(--no-config)
+if [ -f .github/zizmor.yml ]; then
+  config_args=(--config .github/zizmor.yml)
+fi
+
+# 対象の列挙はファイル経由にし、jq / git の失敗を set -e で失敗にする（プロセス置換の中の失敗は set -e の対象外）
+list="${RUNNER_TEMP}/zizmor-targets.txt"
+if [ "${SCAN_ALL}" = "true" ]; then
+  # core.quotePath=false: 非 ASCII パスがクォートされて zizmor にリモート入力と誤解されるのを防ぐ
+  git -c core.quotePath=false ls-files -- "${pathspecs[@]}" > "${list}"
+else
+  jq -r '.[]' <<< "${TARGETS}" > "${list}"
+fi
+mapfile -t targets < "${list}"
+
+# 組織の reusable workflow を置くリポジトリ（<org>/github-workflows・<org>/terraform-modules）が private だと、対象リポジトリの
+# github.token では参照先を読めず、それらの reusable workflow を参照するファイル（Claude レビューや Terraform の caller 等）の
+# impostor-commit が findings ではなく fatal で終了する（#21）。そこで実行トークンで読めるかをリポジトリごとに先に確認し、
+# すべて読めるなら従来どおり全件 online、読めないリポジトリがあれば、それらのみを参照するファイルを online 監査なしで実行する。
+# fork 禁止の private リポジトリには fork 由来の impostor commit が成立せず、ブランチ / タグに属さない SHA の検知は
+# github.token ではどのみち監査できないため、この省略で新たに失う検知は無い。
+# 他の action を 1 つでも参照するファイルは従来どおり online で監査するため、免除を抜け道にはできない。
+# TODO: zizmor に特定リポジトリを除外する設定が入ったら .github/zizmor.yml に乗り換える
+#       https://github.com/zizmorcore/zizmor/issues/1350
+online=()
+offline=()
+# 読めるリポジトリ（public の github-workflows 等）は fork 由来の impostor commit が成立しうるため、免除しない
+unreadable=""
+for repo in github-workflows terraform-modules; do
+  curl -fs -o /dev/null -H "Authorization: Bearer ${GH_TOKEN}" "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY_OWNER}/${repo}" \
+    || unreadable="${unreadable:+${unreadable}|}${repo}"
+done
+if [ -z "${unreadable}" ]; then
+  online=("${targets[@]}")
+  targets=()
+fi
+# 振り分けには mikefarah/yq（ubuntu-latest に同梱）が必要。無い / 別実装（Python 版 yq 等）だと解析失敗として
+# 全件が黙って online に倒れ、caller が原因表示なしで fatal になるため、ツールの不在は明示的に失敗させる
+if [ "${#targets[@]}" -gt 0 ] && ! { yq --version 2>/dev/null | grep -q 'mikefarah/yq'; }; then
+  echo "::error::mikefarah/yq が見つかりません（読めないリポジトリを参照するファイルの振り分けに必要）"
+  exit 1
+fi
+self_ref="^${GITHUB_REPOSITORY_OWNER}/(${unreadable})/"
+for t in "${targets[@]}"; do
+  # YAML を解析して uses: の値を再帰的に集める（flow 形式・引用符付きキー・アンカーも対象。zizmor と同じ見え方にする）。
+  # 解析に失敗したファイルは refs が空になり online 側に倒れる（fatal で気付ける安全側）
+  refs=$(yq -r '[explode(.) | .. | select(tag == "!!map" and has("uses")) | .uses] | .[]' "${t}" 2>/dev/null \
+    | grep -vE '^(\./|docker://|\$/)' || true)
+  # owner / repo 名は大文字小文字を区別しない
+  if [ -n "${refs}" ] && ! grep -qivE "${self_ref}" <<< "${refs}"; then
+    offline+=("${t}")
+    echo "::notice file=${t}::読めないリポジトリ（${unreadable}）のみを参照するため online 監査を省略しました（理由は github-workflows の .github/actions/zizmor/zizmor.sh を参照）"
+  else
+    online+=("${t}")
+    # 読めないリポジトリと他の action の参照が混在すると online 側で generic な fatal になるため、原因を先に示す
+    if grep -qiE "${self_ref}" <<< "${refs}"; then
+      echo "::warning file=${t}::読めないリポジトリ（${unreadable}）と他の action の参照が混在しています。そのため、このファイルの online 監査（impostor-commit）は fatal になります。それらの参照は別ファイルに分けてください"
+    fi
+  fi
+done
+
+# --format github: 検出箇所を PR に annotation 表示する。exit code は zizmor のもの（1: エラー / 14: 検出 等）を保持する
+rc=0
+run_zizmor() { zizmor --no-progress --format github --min-severity high "${config_args[@]}" "$@" || rc=$?; }
+if [ "${#online[@]}" -gt 0 ]; then run_zizmor "${online[@]}"; fi
+if [ "${#offline[@]}" -gt 0 ]; then run_zizmor --no-online-audits "${offline[@]}"; fi
+exit "${rc}"

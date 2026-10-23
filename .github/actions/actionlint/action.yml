@@ -1,0 +1,20 @@
+name: "actionlint でワークフローの構文を検査"
+description: "actionlint を SHA-256 を検証して導入し、.github/workflows/ を検査する"
+
+inputs:
+  version:
+    description: "actionlint の GitHub release のタグ名 (v1.7.12 など)"
+    required: true
+  sha256:
+    description: "linux amd64 のアーカイブの SHA-256"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: "actionlint"
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        SHA256: ${{ inputs.sha256 }}
+      run: bash "${GITHUB_ACTION_PATH}/actionlint.sh"

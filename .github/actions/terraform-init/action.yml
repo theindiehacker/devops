@@ -1,0 +1,29 @@
+name: "terraform init"
+description: >-
+  ディレクトリごとに terraform init（-backend=false。lock ファイルがあれば -lockfile=readonly）を行い、
+  init できたディレクトリを出す（terraform は事前に導入しておく）。
+  private の Module Registry のトークンは、呼び出す step の env（TF_TOKEN_<host>）で渡す
+
+inputs:
+  dirs:
+    description: "init するディレクトリの JSON 配列"
+    required: true
+  plugin-cache-dir:
+    description: "provider のキャッシュの置き場所（TF_PLUGIN_CACHE_DIR）"
+    required: true
+
+outputs:
+  initialized:
+    description: "init できたディレクトリの JSON 配列（失敗したディレクトリがあっても出す）"
+    value: ${{ steps.init.outputs.initialized }}
+
+runs:
+  using: composite
+  steps:
+    - name: "terraform init"
+      id: init
+      shell: bash
+      env:
+        DIRS: ${{ inputs.dirs }}
+        TF_PLUGIN_CACHE_DIR: ${{ inputs.plugin-cache-dir }}
+      run: bash "${GITHUB_ACTION_PATH}/terraform-init.sh"

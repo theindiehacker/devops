@@ -1,0 +1,20 @@
+name: "ディレクトリごとにコマンドを実行"
+description: "JSON 配列で渡したディレクトリごとにコマンドを実行する。1 つ失敗しても残りは続け、最後に失敗を返す"
+
+inputs:
+  dirs:
+    description: "コマンドを実行するディレクトリの JSON 配列"
+    required: true
+  run:
+    description: "各ディレクトリで実行するコマンド（bash で実行する）"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: "ディレクトリごとに実行"
+      shell: bash
+      env:
+        DIRS: ${{ inputs.dirs }}
+        RUN: ${{ inputs.run }}
+      run: bash "${GITHUB_ACTION_PATH}/each-dir.sh"

@@ -1,0 +1,16 @@
+name: "terraform fmt で Terraform の書式を検査"
+description: "変更したファイルのあるディレクトリを terraform fmt -check で検査する（terraform は事前に導入しておく）"
+
+inputs:
+  files:
+    description: "変更した *.tf / *.tfvars / *.tftest.hcl の JSON 配列"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: "terraform fmt"
+      shell: bash
+      env:
+        FILES: ${{ inputs.files }}
+      run: bash "${GITHUB_ACTION_PATH}/terraform-fmt.sh"

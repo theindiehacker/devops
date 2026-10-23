@@ -1,0 +1,16 @@
+name: "terraform test"
+description: "テスト（直下か tests/ の *.tftest.hcl / *.tftest.json）があるディレクトリで terraform test を実行する（init は事前に行っておく）"
+
+inputs:
+  dirs:
+    description: "init できたディレクトリの JSON 配列"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: "terraform test"
+      shell: bash
+      env:
+        DIRS: ${{ inputs.dirs }}
+      run: bash "${GITHUB_ACTION_PATH}/terraform-test.sh"

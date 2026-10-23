@@ -1,0 +1,28 @@
+name: "Python の検査対象を割り当てる"
+description: "uv.lock のあるディレクトリ（プロジェクト）を列挙し、pyproject.toml と import-linter の設定を担当プロジェクトに割り当てる"
+
+outputs:
+  projects:
+    description: "uv.lock のあるディレクトリの JSON 配列（例: [\".\", \"backend\"]）"
+    value: ${{ steps.assign.outputs.projects }}
+  nested:
+    description: >-
+      プロジェクトごとの、別の uv.lock を持つ入れ子のプロジェクト（そのプロジェクトからの相対パス）の JSON オブジェクト
+      （例: {".": ["backend"], "backend": []}）
+    value: ${{ steps.assign.outputs.nested }}
+  pyprojects:
+    description: >-
+      pyproject.toml を担当プロジェクト（project）とそこからの相対パス（rel）に割り当てた JSON 配列。
+      project が空なら、どの uv.lock の配下にも無く検査できない
+    value: ${{ steps.assign.outputs.pyprojects }}
+  importlinters:
+    description: "import-linter の設定を pyprojects と同じ形で割り当てた JSON 配列"
+    value: ${{ steps.assign.outputs.importlinters }}
+
+runs:
+  using: composite
+  steps:
+    - name: "検査対象を割り当てる"
+      id: assign
+      shell: bash
+      run: bash "${GITHUB_ACTION_PATH}/python-targets.sh"

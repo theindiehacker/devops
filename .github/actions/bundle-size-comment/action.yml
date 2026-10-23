@@ -1,0 +1,29 @@
+name: "バンドルサイズを PR にコメント"
+description: >-
+  計測結果から本文を作り、前回のコメント（github-actions[bot] が書いた、目印のあるもの）を書き換える。
+  計測していないのに前回のコメントも無いときは、何も書かない。checkout せず、PR のコードは動かさない
+
+inputs:
+  targets:
+    description: "bundle-size-targets の出力 targets"
+    required: true
+  results:
+    description: "計測結果（bundle-size-<key>.md）を置いたディレクトリ"
+    required: true
+  github-token:
+    description: "PR にコメントするトークン（pull-requests: write）"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: "PR にコメント"
+      shell: bash
+      env:
+        TARGETS: ${{ inputs.targets }}
+        RESULTS: ${{ inputs.results }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ github.event.pull_request.number }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        MARKER: "<!-- github-workflows/bundle-size -->"
+      run: bash "${GITHUB_ACTION_PATH}/bundle-size-comment.sh"

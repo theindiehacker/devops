@@ -1,0 +1,584 @@
+name: "✏️ スタイルチェック"
+
+# 全 repo に適用する必須ワークフロー。ワークフロー定義・シェルスクリプト・Terraform・Python・TypeScript を検査し、
+# フロントエンドのバンドルサイズの増減を PR にコメントする。
+#
+# ⚠️ 必須ワークフローは on: のフィルタ（paths / branches / types 等）が無視され全 PR で起動されるため、
+#    対象の判定は lint job の中で行う。課金は job ごとに切り上げられ、skip された job には掛からないため、
+#    常に動く job は lint だけにする。PR のコードを実行する検査（依存の導入・terraform init・ビルド）は、
+#    対象があるときだけ別の job で動かす。
+#
+# 権限は read のみとし、secrets を使わない（例外は docs/SETUP.md「2.」の「✏️ スタイルチェック」を参照）。
+# 必須ワークフローは対象 repo で動くため、この repo の action はパスではなく SHA で参照する
+# （action を変えたら、uses の SHA も上げる）
+
+# main への直 push はルールセットで禁止されているため、PR だけを対象にする
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+# 同じ PR で新しい push があれば、古い run をキャンセルする。
+# concurrency group は repo 内の全 workflow で共有されるため、各 repo の workflow と重ならないよう github-workflows- を付ける
+concurrency:
+  group: github-workflows-style-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  # ツール版は対象 repo の宣言を読まず中央で固定する（2 桁の版が float に化けないよう引用符で囲む）
+  # renovate: datasource=pypi depName=uv
+  UV_VERSION: "0.13.4"
+  # renovate: datasource=pypi depName=ruff
+  RUFF_VERSION: "0.17.1"
+  # renovate: datasource=pypi depName=pyright
+  PYRIGHT_VERSION: "1.1.414"
+  # renovate: datasource=pypi depName=import-linter
+  IMPORT_LINTER_VERSION: "2.15"
+  # renovate: datasource=pypi depName=deptry
+  DEPTRY_VERSION: "0.25.1"
+
+jobs:
+  lint:
+    name: "lint"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45  # step の timeout の合計より長くする
+    permissions:
+      contents: read
+      pull-requests: read  # paths-filter の変更ファイル一覧取得に必要
+    outputs:
+      terraform: ${{ steps.filter.outputs.terraform }}
+      python_projects: ${{ steps.python.outputs.projects || '[]' }}
+      python_nested: ${{ steps.python.outputs.nested || '{}' }}
+      python_importlinters: ${{ steps.python.outputs.importlinters || '[]' }}
+      typescript_roots: ${{ steps.typescript.outputs.roots || '[]' }}
+      typescript_tsconfigs: ${{ steps.typescript.outputs.tsconfigs || '[]' }}
+      typescript_nextjs: ${{ steps.typescript.outputs.nextjs || '[]' }}
+      bundle_size_frontends: ${{ steps.bundle-size.outputs.frontends }}
+      bundle_size_targets: ${{ steps.bundle-size.outputs.targets || '[]' }}
+    steps:
+      - name: "検査対象を判定"
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
+        with:
+          list-files: json
+          # 削除ファイルを検査できないツールは added|modified|copied で対象外にする
+          # （rename は added + deleted に分解され新パス側が対象になる）
+          filters: |
+            # 削除のみの変更は残りのファイルの lint 結果を変えないため対象外。
+            # ワークフローを全削除した PR で actionlint が「no project was found」で exit 3 になるのも防ぐ
+            actionlint:
+              - added|modified|copied: ".github/workflows/*.yml"
+              - added|modified|copied: ".github/workflows/*.yaml"
+              - added|modified|copied: ".github/actionlint.yml"
+              - added|modified|copied: ".github/actionlint.yaml"
+            shellcheck:
+              - added|modified|copied: "**/*.sh"
+              - added|modified|copied: "**/*.bash"
+              - added|modified|copied: "**/*.ksh"
+            # terraform fmt が整形する HCL のみ（*.tf.json / *.tfvars.json は対象外）
+            terraform_fmt:
+              - added|modified|copied: "**/*.tf"
+              - added|modified|copied: "**/*.tfvars"
+              - added|modified|copied: "**/*.tftest.hcl"
+            tflint:
+              - added|modified|copied: "**/*.tf"
+              - added|modified|copied: "**/*.tf.json"
+              - added|modified|copied: "**/*.tfvars"
+              - added|modified|copied: "**/*.tfvars.json"
+            # 削除も対象（モジュールの削除で、それを呼ぶ examples が壊れる）
+            terraform:
+              - "**/*.tf"
+              - "**/*.tf.json"
+              - "**/*.tftest.hcl"
+              - "**/*.tftest.json"
+              - "**/.terraform.lock.hcl"
+            # 削除も対象（削除したモジュールを import する側や、設定の削除で結果が変わる）
+            python:
+              - "**/*.py"
+              - "**/*.pyi"
+              - "**/ruff.toml"
+              - "**/.ruff.toml"
+              - "**/pyproject.toml"
+              # pyrightconfig.json と、extends で読む共有の設定（この名前にすれば変更で検査が動く）
+              - "**/pyright*.json"
+              - "**/setup.cfg"
+              - "**/.importlinter"
+              - "**/uv.lock"
+              - "**/uv.toml"
+              - "**/.python-version"
+              - "**/*requirements*.txt"
+              - "**/requirements/*.txt"
+              - "**/Pipfile"
+              - "**/Pipfile.lock"
+              - "**/poetry.lock"
+              - "**/pdm.lock"
+            # 3 つのツールの入力を全て覆う必要がある。Biome / knip は JS も解析対象のため .js 系を含め、
+            # tsconfig.base.json のような extends 先も拾えるよう tsconfig*.json で受ける
+            typescript:
+              - "**/*.ts"
+              - "**/*.tsx"
+              - "**/*.mts"
+              - "**/*.cts"
+              - "**/*.js"
+              - "**/*.jsx"
+              - "**/*.mjs"
+              - "**/*.cjs"
+              - "**/package.json"
+              - "**/bun.lock"
+              - "**/bun.lockb"
+              - "**/bunfig.toml"
+              - "**/tsconfig*.json"
+              - "**/biome.json"
+              - "**/biome.jsonc"
+              - "**/knip.json"
+              - "**/knip.jsonc"
+
+      - name: "Checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # バンドルサイズの計測対象の判定が、マージコミットの親（マージ先）との差分を git diff で調べる
+          fetch-depth: 2
+
+      # 判定も !cancelled() で動かし、1 つの判定の失敗でほかの検査の対象が決まらなくならないようにする
+
+      - name: "Python の検査対象を割り当てる"
+        id: python
+        if: ${{ !cancelled() && steps.filter.outputs.python == 'true' }}
+        uses: theindiehacker/github-workflows/.github/actions/python-targets@a7539182106264f76d6627b37d8eed62cc60cff2
+
+      - name: "TypeScript の検査対象を収集"
+        id: typescript
+        if: ${{ !cancelled() && steps.filter.outputs.typescript == 'true' }}
+        uses: theindiehacker/github-workflows/.github/actions/typescript-targets@a7539182106264f76d6627b37d8eed62cc60cff2
+
+      - name: "バンドルサイズの計測対象を判定"
+        id: bundle-size
+        if: ${{ !cancelled() }}
+        uses: theindiehacker/github-workflows/.github/actions/bundle-size-targets@a7539182106264f76d6627b37d8eed62cc60cff2
+
+      # 以降の各ツールは !cancelled() で暗黙の success() を外し、前のツールが失敗しても全ツールの結果を 1 run で出す
+
+      - name: "🧹 actionlint"
+        if: ${{ !cancelled() && steps.filter.outputs.actionlint == 'true' }}
+        timeout-minutes: 5
+        uses: theindiehacker/github-workflows/.github/actions/actionlint@a7539182106264f76d6627b37d8eed62cc60cff2
+        with:
+          # renovate: datasource=github-release-attachments depName=rhysd/actionlint
+          version: v1.7.12
+          sha256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+
+      - name: "🐚 shellcheck"
+        if: ${{ !cancelled() && steps.filter.outputs.shellcheck == 'true' }}
+        timeout-minutes: 5
+        uses: theindiehacker/github-workflows/.github/actions/shellcheck@a7539182106264f76d6627b37d8eed62cc60cff2
+        with:
+          # renovate: datasource=github-release-attachments depName=koalaman/shellcheck
+          version: v0.11.0
+          sha256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+          files: ${{ steps.filter.outputs.shellcheck_files }}
+
+      # 版は対象 repo の宣言を読まず中央で 1 つに固定する（terraform job も同じ値を使う）。
+      # action は HashiCorp の SHA256SUMS の署名を検証してから導入する
+      - name: "Setup terraform"
+        if: ${{ !cancelled() && steps.filter.outputs.terraform_fmt == 'true' }}
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e  # v4.0.1
+        with: &setup-terraform
+          terraform_version: "1.16.0"
+          terraform_wrapper: false
+
+      - name: "🏗️ terraform fmt"
+        if: ${{ !cancelled() && steps.filter.outputs.terraform_fmt == 'true' }}
+        timeout-minutes: 5
+        uses: theindiehacker/github-workflows/.github/actions/terraform-fmt@a7539182106264f76d6627b37d8eed62cc60cff2
+        with:
+          files: ${{ steps.filter.outputs.terraform_fmt_files }}
+
+      # checksums は release の zip の SHA-256。action がダウンロード後に検証する
+      - name: "Setup tflint"
+        if: ${{ !cancelled() && steps.filter.outputs.tflint == 'true' }}
+        uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337  # v6.3.2
+        with:
+          # renovate: datasource=github-release-attachments depName=terraform-linters/tflint
+          tflint_version: v0.64.0
+          checksums: cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
+
+      - name: "🏗️ tflint"
+        if: ${{ !cancelled() && steps.filter.outputs.tflint == 'true' }}
+        timeout-minutes: 10
+        uses: theindiehacker/github-workflows/.github/actions/tflint@a7539182106264f76d6627b37d8eed62cc60cff2
+        with:
+          files: ${{ steps.filter.outputs.tflint_files }}
+          github-token: ${{ github.token }}
+          # 設定は全リポジトリ共通でここに固定する（対象 repo の .tflint.hcl は読まない）
+          config: |
+            config {
+              call_module_type = "local"
+            }
+
+            plugin "terraform" {
+              enabled = true
+              preset  = "all"
+            }
+
+            plugin "google" {
+              enabled = true
+              version = "0.40.0"
+              source  = "github.com/terraform-linters/tflint-ruleset-google"
+            }
+
+            plugin "aws" {
+              enabled = true
+              version = "0.49.0"
+              source  = "github.com/terraform-linters/tflint-ruleset-aws"
+            }
+
+      - name: "📜 Python の規約を検査"
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        timeout-minutes: 5
+        uses: theindiehacker/github-workflows/.github/actions/python-rule@a7539182106264f76d6627b37d8eed62cc60cff2
+        with:
+          pyprojects: ${{ steps.python.outputs.pyprojects }}
+          importlinters: ${{ steps.python.outputs.importlinters }}
+
+      - name: "✏️ ruff check"
+        id: ruff
+        if: ${{ !cancelled() && steps.filter.outputs.python == 'true' }}
+        timeout-minutes: 5
+        uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89  # v4.1.0
+        with:
+          version: ${{ env.RUFF_VERSION }}
+          args: "check --no-fix --output-format=github"
+          # 既定は ${{ github.workspace }}（絶対パス）で、annotation が PR の差分に貼られない
+          src: "."
+
+      # 前の step の action が ruff を PATH に入れる
+      - name: "✏️ ruff format"
+        if: ${{ !cancelled() && steps.ruff.outcome != 'skipped' }}
+        shell: bash
+        run: ruff format --check --diff
+
+      # bandit 相当の S ルールを、対象 repo の select / ignore に関わらず必ず検査する（--select が設定を上書きする）。
+      # 誤検知は # noqa: Sxxx か per-file-ignores で個別に外す。S101（assert）はテストで多用され誤検知が大半のため除く
+      - name: "🛡️ ruff security"
+        if: ${{ !cancelled() && steps.ruff.outcome != 'skipped' }}
+        shell: bash
+        run: ruff check --no-fix --output-format=github --select S --ignore S101
+
+  # Terraform の validate / test を行う（init が要るため lint とは分ける）。
+  # terraform init / test は PR に書かれた provider・module・data source を実行する
+  terraform:
+    name: "Terraform を検査"
+    needs: lint
+    # lint で違反が出ても、同じ run で結果を出す
+    if: ${{ !cancelled() && needs.lint.outputs.terraform == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      TF_IN_AUTOMATION: "1"
+      TF_INPUT: "0"
+      CHECKPOINT_DISABLE: "1"
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # 変更があったディレクトリではなく repo 全体を検査する（examples/ はモジュールを相対パスで呼ぶため、
+      # モジュールだけを変えた PR で examples が壊れても検知できるようにする）
+      - name: "検査対象を収集"
+        id: dirs
+        uses: theindiehacker/github-workflows/.github/actions/terraform-dirs@a7539182106264f76d6627b37d8eed62cc60cff2
+
+      - name: "Setup terraform"
+        if: steps.dirs.outputs.dirs != '[]'
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e  # v4.0.1
+        with: *setup-terraform
+
+      # provider は lock ファイルの checksum と一致したものだけが使われるため、キャッシュの中身は init 時に検証される
+      - name: "provider のキャッシュ"
+        if: steps.dirs.outputs.dirs != '[]'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ${{ runner.temp }}/terraform-plugin-cache
+          key: terraform-plugins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/.terraform.lock.hcl') }}
+          restore-keys: |
+            terraform-plugins-${{ runner.os }}-${{ runner.arch }}-
+
+      # secrets は private の Module Registry（registry.fastship.jp）の読み取りトークンだけを、module の取得のためこの step にだけ渡す
+      - name: "terraform init"
+        id: init
+        if: steps.dirs.outputs.dirs != '[]'
+        uses: theindiehacker/github-workflows/.github/actions/terraform-init@a7539182106264f76d6627b37d8eed62cc60cff2
+        env:
+          # terraform はこのホストへのリクエストにだけトークンを付ける。secret が無い repo では空になり、registry を使わない repo には影響しない
+          TF_TOKEN_registry_fastship_jp: ${{ secrets.REGISTRY_TOKEN }}
+        with:
+          dirs: ${{ steps.dirs.outputs.dirs }}
+          plugin-cache-dir: ${{ runner.temp }}/terraform-plugin-cache
+
+      - name: "terraform validate"
+        # init が失敗しても、init できたディレクトリは validate する
+        if: ${{ !cancelled() && steps.init.outcome != 'skipped' }}
+        uses: theindiehacker/github-workflows/.github/actions/each-dir@a7539182106264f76d6627b37d8eed62cc60cff2
+        env:
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
+        with:
+          dirs: ${{ steps.init.outputs.initialized || '[]' }}
+          run: terraform validate
+
+      - name: "terraform test"
+        # init / validate が失敗しても、init できたディレクトリのテストは実行する
+        if: ${{ !cancelled() && steps.init.outcome != 'skipped' }}
+        uses: theindiehacker/github-workflows/.github/actions/terraform-test@a7539182106264f76d6627b37d8eed62cc60cff2
+        env:
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
+        with:
+          dirs: ${{ steps.init.outputs.initialized || '[]' }}
+
+  python:
+    name: "🚧 型・依存関係を検査 (${{ matrix.project }})"
+    needs: lint
+    # lint で違反が出ても、同じ run で結果を出す
+    if: ${{ !cancelled() && needs.lint.outputs.python_projects != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ fromJSON(needs.lint.outputs.python_projects) }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ matrix.project }}
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: "Install uv"
+        id: uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          working-directory: ${{ matrix.project }}
+          enable-cache: true
+          # 既定の glob は pyproject.toml 等も含み、依存と無関係な変更でキャッシュが無効になる。
+          # pyproject.toml との一致は uv lock --check で強制しているため lock だけで足りる
+          cache-dependency-glob: uv.lock
+          cache-suffix: python-${{ env.UV_VERSION }}
+
+      - name: "uv.lock が pyproject.toml と一致しているか"
+        run: uv lock --check
+
+      # 以降の step は !cancelled() で暗黙の success() を外し、前段が fail しても 3 ツールの結果を 1 run で出す
+
+      - name: "🧰 依存関係を導入"
+        id: deps
+        if: ${{ !cancelled() && steps.uv.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          # workspace の全メンバー・extras・dependency-groups まで入れる（不足すると Pyright / deptry が誤検知する）
+          if uv sync --frozen --all-packages --all-extras --all-groups; then exit 0; fi
+          echo "::warning::extras を含めた uv sync に失敗したため extras を除いて検査します（extras 限定の依存は Pyright / deptry が誤検知することがあります）"
+          # 導入できなければ検査を skip せず fail させる（緑のまま「何も検査していない」状態を作らないため）
+          uv sync --frozen --all-packages --all-groups || { echo "::error::uv sync に失敗しました。ランナーで依存を導入できない repo の扱いは docs/SETUP.md「✏️ スタイルチェック」の例外運用を参照してください"; exit 1; }
+
+      - name: "🧱 Pyright - 型チェック"
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        uses: theindiehacker/github-workflows/.github/actions/pyright@a7539182106264f76d6627b37d8eed62cc60cff2
+        with:
+          version: ${{ env.PYRIGHT_VERSION }}
+          project: ${{ matrix.project }}
+          nested: ${{ needs.lint.outputs.python_nested }}
+
+      - name: "➡️ lint-imports - モジュール依存関係を検査"
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        uses: theindiehacker/github-workflows/.github/actions/lint-imports@a7539182106264f76d6627b37d8eed62cc60cff2
+        with:
+          version: ${{ env.IMPORT_LINTER_VERSION }}
+          project: ${{ matrix.project }}
+          importlinters: ${{ needs.lint.outputs.python_importlinters }}
+
+      - name: "🗑️ deptry - 不要なパッケージを検知"
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
+        uses: theindiehacker/github-workflows/.github/actions/deptry@a7539182106264f76d6627b37d8eed62cc60cff2
+        with:
+          version: ${{ env.DEPTRY_VERSION }}
+          project: ${{ matrix.project }}
+
+  # 対象 repo に求める前提: bun.lock をコミットし、biome / knip / typescript を devDependencies に持つこと
+  typescript:
+    name: "TypeScript を検査"
+    needs: lint
+    # lint で違反が出ても、同じ run で結果を出す
+    if: ${{ !cancelled() && needs.lint.outputs.typescript_roots != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # bun 本体は対象 repo の指定ではなく中央で固定する（bundle-size-measure も同じ値を使う）
+      - name: "Install bun"
+        uses: theindiehacker/github-workflows/.github/actions/install-bun@a7539182106264f76d6627b37d8eed62cc60cff2
+        with: &bun
+          # renovate: datasource=github-release-attachments depName=oven-sh/bun
+          version: bun-v1.4.3
+          sha256: 3e730528d89775f03f87f05c06787c4df4099d0a37f3f252e7b829cb23816e18
+
+      # bun install が失敗した場合のみ後続を skip する。biome / knip / tsc は互いに独立して実行するため、
+      # 1 回の run で全ての違反が出揃う
+      - name: "bun install"
+        id: install
+        uses: theindiehacker/github-workflows/.github/actions/each-dir@a7539182106264f76d6627b37d8eed62cc60cff2
+        with:
+          dirs: ${{ needs.lint.outputs.typescript_roots }}
+          run: bun install --frozen-lockfile
+
+      - name: "biome ci"
+        # 検出箇所を PR に annotation 表示する（--reporter=github）
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        uses: theindiehacker/github-workflows/.github/actions/each-dir@a7539182106264f76d6627b37d8eed62cc60cff2
+        with:
+          dirs: ${{ needs.lint.outputs.typescript_roots }}
+          run: bun run biome ci --reporter=github .
+
+      - name: "knip"
+        # 未使用パッケージの検知に絞る（unused files / exports は対象外）
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        uses: theindiehacker/github-workflows/.github/actions/each-dir@a7539182106264f76d6627b37d8eed62cc60cff2
+        with:
+          dirs: ${{ needs.lint.outputs.typescript_roots }}
+          run: bun run knip --dependencies
+
+      - name: "next typegen"
+        # Next.js はルートの型 (LayoutProps・PageProps など) と next-env.d.ts を生成し、生成物は gitignore する。
+        # Next.js 公式の CI での型チェック (next typegen && tsc --noEmit) に合わせ、tsc の前に生成する
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        uses: theindiehacker/github-workflows/.github/actions/each-dir@a7539182106264f76d6627b37d8eed62cc60cff2
+        with:
+          dirs: ${{ needs.lint.outputs.typescript_nextjs }}
+          run: bun run next typegen
+
+      - name: "tsc"
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        uses: theindiehacker/github-workflows/.github/actions/each-dir@a7539182106264f76d6627b37d8eed62cc60cff2
+        with:
+          dirs: ${{ needs.lint.outputs.typescript_tsconfigs }}
+          run: bun run tsc --noEmit
+
+  # フロントエンドのバンドルサイズを計測し、ページ表示速度が遅くなるのを防止する。
+  # なぜならページ表示速度が遅くなると、UX が悪化するからだ。
+  #
+  # PR とマージ先の両方をビルドし、JS・CSS の gzip 後のサイズの増減を PR にコメントする（preactjs/compressed-size-action）。
+  # 報告だけで、サイズが増えてもマージは止めない。計測できなかった場合は、その旨をコメントし、run は success にする。
+  # PR のコードを動かす計測の job（bundle-size-measure）は read のみにし、結果を artifact で渡す。
+  # PR にコメントする job（bundle-size-comment）だけが pull-requests: write を持ち、PR のコードは動かさない（docs/SETUP.md「2.」）。
+  bundle-size-measure:
+    name: "バンドルサイズを計測 (${{ matrix.dir }})"
+    needs: lint
+    # 空の matrix は job エラーになるため、対象 0 件なら skip する（skip は run の成功として扱われる）
+    if: ${{ !cancelled() && needs.lint.outputs.bundle_size_targets != '[]' }}
+    runs-on: ubuntu-latest
+    # job の timeout は run を cancelled にしてマージを止めるため、step の timeout の合計より長くし、届かないようにする
+    timeout-minutes: 60
+    # 報告だけの計測のため、checkout や bun の取得の失敗でもマージを止めない（bundle-size-comment が「計測できませんでした」と書く）
+    continue-on-error: true
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.lint.outputs.bundle_size_targets) }}
+    steps:
+      - name: "Checkout"
+        timeout-minutes: 5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2  # マージ先のコミット（マージコミットの親）も取得する
+
+      # action はマージ先を git fetch origin <ブランチ>:<ブランチ> で取得し、git reset --hard <ブランチ> で切り替える。
+      # public / private を問わず lint と同じマージコミットの親と比べるため、origin を消して fetch を失敗させ
+      # （ログの fatal は想定どおり）、ここで作ったブランチでビルドする
+      - name: "マージ先のブランチを作る"
+        shell: bash
+        run: |
+          git branch "${GITHUB_BASE_REF}" HEAD^1
+          git remote remove origin
+
+      - name: "Install bun"
+        timeout-minutes: 5
+        uses: theindiehacker/github-workflows/.github/actions/install-bun@a7539182106264f76d6627b37d8eed62cc60cff2
+        with: *bun
+
+      # トークンは read のみのため、action による PR へのコメントは失敗する（ログのエラーは想定どおり）。
+      # action はコメントの本文を comment-body に出力するので、それを bundle-size-comment に渡す
+      - name: "バンドルサイズを比較"
+        id: compare
+        continue-on-error: true
+        # PR とマージ先で 2 回ビルドする（how-much.fun は 5,000 ページ超の静的生成があり、1 回に 9 分かかる）
+        timeout-minutes: 40
+        uses: preactjs/compressed-size-action@f322c295dde06a1cb7ccaef105732dd8a726d1d9  # 2.10.0
+        with:
+          cwd: ${{ matrix.dir }}
+          pattern: ${{ matrix.pattern }}
+
+      - name: "計測結果をファイルに書く"
+        if: steps.compare.outcome == 'success'
+        shell: bash
+        env:
+          BODY: ${{ steps.compare.outputs.comment-body }}
+          KEY: ${{ matrix.key }}
+        run: printf '%s\n' "${BODY}" > "${RUNNER_TEMP}/bundle-size-${KEY}.md"
+
+      - name: "計測結果を渡す"
+        if: steps.compare.outcome == 'success'
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: bundle-size-${{ matrix.key }}
+          path: ${{ runner.temp }}/bundle-size-${{ matrix.key }}.md
+          retention-days: 1
+
+  bundle-size-comment:
+    name: "バンドルサイズを PR にコメント"
+    needs: [lint, bundle-size-measure]
+    # 計測しなかった・計測に失敗した場合も、前回のコメントを書き換えるため動かす（フロントエンドが無い repo では skip）
+    if: ${{ !cancelled() && needs.lint.outputs.bundle_size_frontends == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15  # step の timeout の合計より長くする（bundle-size-measure と同じ理由）
+    # fork からの PR（public repo のみ）ではトークンが read のみになり投稿に失敗するが、マージは止めない
+    continue-on-error: true
+    permissions:
+      pull-requests: write  # PR にコメントする（checkout せず、PR のコードは動かさない）
+    steps:
+      - name: "計測結果を受け取る"
+        if: needs.lint.outputs.bundle_size_targets != '[]'
+        continue-on-error: true  # 全ての計測に失敗すると artifact が 1 つも無い
+        timeout-minutes: 5
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: bundle-size-*
+          # artifact が 1 つだけだと path の直下、2 つ以上だと artifact ごとのディレクトリに置かれるため、直下にそろえる
+          merge-multiple: true
+          path: ${{ runner.temp }}/results
+
+      - name: "PR にコメント"
+        timeout-minutes: 5
+        uses: theindiehacker/github-workflows/.github/actions/bundle-size-comment@a7539182106264f76d6627b37d8eed62cc60cff2
+        with:
+          targets: ${{ needs.lint.outputs.bundle_size_targets }}
+          results: ${{ runner.temp }}/results
+          github-token: ${{ github.token }}
