@@ -20,6 +20,7 @@ resource "github_actions_organization_permissions" "this" {
       "dorny/paths-filter@*",
       # Workload Identity 連携で Google Cloud に認証する公式 action（各リポジトリの Terraform plan / apply が使用する）
       "google-github-actions/auth@*",
+      "google-github-actions/setup-gcloud@*",
       # terraform / lint（style.yml）が使用する
       "hashicorp/setup-terraform@*",
       # app.fastship.jp の CI（py-check.yml / py-test.yml）が、mise.toml・mise.lock の版で task・uv などを入れるために使用する
@@ -29,6 +30,7 @@ resource "github_actions_organization_permissions" "this" {
       "oven-sh/setup-bun@*",
       # bundle-size-measure（style.yml）が、フロントエンドのバンドルサイズの増減を PR にコメントするために使用する
       "preactjs/compressed-size-action@*",
+      "pypa/gh-action-pypi-publish@*",
       "renovatebot/github-action@*",
       # lint（style.yml）が使用する
       "terraform-linters/setup-tflint@*",
