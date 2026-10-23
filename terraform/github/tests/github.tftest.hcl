@@ -72,12 +72,15 @@ run "Renovate_は_PR_のときだけ承認を_bypass_できる" {
 
   assert {
     condition = alltrue([
-      for actor in concat(
-        github_organization_ruleset.pull_request_approval.bypass_actors,
-        github_organization_ruleset.workflow_change_review.bypass_actors,
-      ) : actor.bypass_mode == "pull_request" if actor.actor_type == "Integration"
+      for actor in github_organization_ruleset.pull_request_approval.bypass_actors :
+      actor.bypass_mode == "pull_request" if actor.actor_type == "Integration"
     ])
     error_message = "Renovate の bypass は PR のときだけにする"
+  }
+
+  assert {
+    condition     = length([for actor in github_organization_ruleset.workflow_change_review.bypass_actors : actor if actor.actor_type == "Integration"]) == 0
+    error_message = "検知ワークフローの変更は、Renovate の PR でも security チームの承認を必須にする（乗っ取られた action の版が全 repo に広がるのを防ぐ）"
   }
 }
 

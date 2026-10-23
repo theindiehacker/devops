@@ -9,7 +9,7 @@
 locals {
   all_merge_methods = ["merge", "squash", "rebase"]
 
-  # Renovate の更新 PR を承認なしで自動マージするため、承認系のルールセットの bypass に入れる（PR のときだけ）
+  # Renovate の更新 PR を承認なしで自動マージするため、pull_request_approval の bypass に入れる（PR のときだけ）
   renovate_app_id = tonumber(data.github_app.renovate.id)
 
   # 必須ワークフローの実体（この repo の main）。変更には security チームの承認が要る（workflow_change_review）
@@ -194,17 +194,13 @@ resource "github_organization_ruleset" "security_config_review" {
 # 必須ワークフローは、検知の処理（ツールのオプション・インライン ignore の禁止など）を composite action（.github/actions/）に置き、
 # SHA で参照している。参照する SHA を上げる PR だけでは処理の差分が見えないため、action の変更も対象にする。
 # レビューでは、参照する SHA が main に含まれるコミットであることも確認する。
-# このルールセット自体の定義（terraform/github/）も、検知を弱められるため対象に含める
+# このルールセット自体の定義（terraform/github/）も、検知を弱められるため対象に含める。
+# Renovate は bypass に入れない。外部の action が乗っ取られて悪い版が出ると、その SHA に上げる PR が
+# 人の確認なしにマージされ、org の全 repo の必須ワークフローに広がるため
 resource "github_organization_ruleset" "workflow_change_review" {
   name        = "🛠️ 検知ワークフロー変更の承認必須化"
   target      = "branch"
   enforcement = "active"
-
-  bypass_actors {
-    actor_type  = "Integration"
-    actor_id    = local.renovate_app_id
-    bypass_mode = "pull_request"
-  }
 
   dynamic "bypass_actors" {
     for_each = local.single_approver ? [true] : []

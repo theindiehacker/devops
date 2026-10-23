@@ -25,7 +25,7 @@ data "github_repository" "github_workflows" {
   full_name = "${local.owner}/github-workflows"
 }
 
-# Renovate の更新 PR を承認なしで自動マージするため、承認系のルールセットの bypass に入れる
+# Renovate の更新 PR を承認なしで自動マージするため、「✅ PR の承認を必須化」の bypass に入れる
 data "github_app" "renovate" {
   slug = "renovate-${local.owner}"
 }
