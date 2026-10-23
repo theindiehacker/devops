@@ -24,7 +24,8 @@ tasks:
   security:gitleaks:
     desc: 🛡️ セキュリティチェック / 🔑 シークレット情報の検知
     # lefthook から呼ばれたときは、コミット中のインデックス（SCAN_INDEX_FILE）を検査する
-    cmd: GIT_INDEX_FILE="${SCAN_INDEX_FILE:-$(git rev-parse --git-path index)}" gitleaks git --pre-commit --redact --staged --verbose --ignore-gitleaks-allow
+    # --max-archive-depth: zip / tar.gz などの圧縮ファイルを展開して中身も検査する（入れ子は 5 階層まで）
+    cmd: GIT_INDEX_FILE="${SCAN_INDEX_FILE:-$(git rev-parse --git-path index)}" gitleaks git --pre-commit --redact --staged --verbose --ignore-gitleaks-allow --max-archive-depth 5
 
   security:check:
     desc: 🛡️ セキュリティチェック

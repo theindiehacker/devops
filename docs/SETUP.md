@@ -414,7 +414,9 @@ Rules セクションで以下を設定:
 
 | Extension |
 |:----------|
-| `pem` / `key` / `p12` / `pfx` / `jks` / `keystore` / `tfstate` |
+| `pem` / `key` / `p12` / `pfx` / `jks` / `keystore` / `tfstate` / `tfplan` |
+
+※ `tfplan`(`terraform plan -out` の出力)は、`sensitive` な値も含めて平文で入る。
 
 ✅ **Restrict file size** — `5MB`
 

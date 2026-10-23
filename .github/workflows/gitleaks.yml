@@ -50,12 +50,14 @@ jobs:
         run: |
           set -euo pipefail
           # --ignore-gitleaks-allow: インライン allow コメントを無効化（抑制は承認必須の .gitleaksignore に限定する）
+          # --max-archive-depth: zip / tar.gz などの圧縮ファイルを展開して中身も検査する（入れ子は 5 階層まで）
           rc=0
-          gitleaks git . --redact --verbose --exit-code 1 --ignore-gitleaks-allow --log-opts="${LOG_OPTS}" \
+          gitleaks git . --redact --verbose --exit-code 1 --ignore-gitleaks-allow --max-archive-depth 5 --log-opts="${LOG_OPTS}" \
             --report-format json --report-path gitleaks-report.json || rc=$?
 
           # 検出箇所を PR に annotation 表示する（シークレット本体・マッチ文字列は含めない）
+          # 圧縮ファイル内の検出は File が「a.zip!dir/b.txt」になるため、annotation は圧縮ファイル自体に付け、中のパスはメッセージに出す
           if [ -s gitleaks-report.json ]; then
-            jq -r '.[] | "::error file=\(.File),line=\(.StartLine)::gitleaks (\(.RuleID)): \(.Description) — commit \(.Commit[0:8]) にシークレットの可能性"' gitleaks-report.json
+            jq -r '.[] | "::error file=\(.File | split("!")[0]),line=\(.StartLine)::gitleaks (\(.RuleID)): \(.Description) — \(.File) (commit \(.Commit[0:8])) にシークレットの可能性"' gitleaks-report.json
           fi
           exit "${rc}"
