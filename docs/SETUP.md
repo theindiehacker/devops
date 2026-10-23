@@ -2,11 +2,24 @@
 
 > ⚠️ **前提** : GitHub Team プランを契約していること
 
+Organization の設定は Terraform（[`terraform/github/`](../terraform/github/)）で管理する。設定の値と、なぜその値にしているかは `.tf` のコメントに書いている。
+このドキュメントには、API で変えられないため手作業で行う設定と、Terraform の使い方を書く。
+
+| 設定 | 管理する場所 |
+|:--|:--|
+| ベース権限・リポジトリ作成・fork の禁止 | [`organization.tf`](../terraform/github/organization.tf) |
+| security チームとメンバー・Organization role | [`teams.tf`](../terraform/github/teams.tf) |
+| ルールセット（branch / push / tag） | [`rulesets.tf`](../terraform/github/rulesets.tf) |
+| 実行できる action の制限・`GITHUB_TOKEN` のデフォルト権限 | [`actions.tf`](../terraform/github/actions.tf) |
+| 二要素認証・組織シークレット・Claude GitHub App・Immutable releases | 手作業（「0.」「4.」「5.」） |
+
 ## 0. 🏢 Organization の基本設定
 
-<details><summary>🫆 <b>二要素認証を必須にする</b></summary>
+<details><summary>🫆 <b>二要素認証を必須にする</b>（手作業）</summary>
 
 🔗 Organization → Settings → Authentication security
+
+API で変えられないため、UI で設定する。設定されていないと `terraform plan` で警告が出る。
 
 ![](./0/二要素認証を必須にする.png)
 *チェックを入れてください*
@@ -31,457 +44,146 @@ https://github.com/settings/security を開き、"Two-factor authentication" が
 
 </details>
 
-<details><summary>💪 <b>組織のリポジトリに対するベース権限を設定する</b></summary>
+---
+## 1. 🏗️ Terraform で設定を反映する
 
-🔗 Organization → Settings → Member privileges
+apply は Organization の owner が手元から行う。state は手元のファイル（`terraform/github/terraform.tfstate`）に置く。
+state には設定の全体が平文で入るため、コミットしない（`.gitignore` に入れている。`*.tfstate` は push ルールセットでも拒否されるが、`*.tfstate.backup` は拒否されない）。
 
- - 将来メンバーが増える前提で「職務分掌」を意識したい → `No permission`
- - 「組織メンバー＝基本的に全部のコードは見えてよい」という文化 & まだ少人数 → `Read`
+**準備**
 
-![Base permissions](./0/Base%20permissions.png)
+```shell
+mise install                          # terraform を入れる
+gh auth refresh -h github.com -s admin:org  # provider は gh の token を使う
+terraform -chdir=terraform/github init
+```
 
-</details>
+**初回（と、state を失くしたとき）** : 今の設定を state に取り込む。GitHub の設定は変わらない。
 
-<details><summary>❌ <b>管理者しかリポジトリを作成できないにする</b></summary>
+```shell
+terraform/github/import.sh
+```
 
-🔗 Organization → Settings → Member privileges
+最後に「Terraform で管理していないルールセット」が出たら、名前が `rulesets.tf` と違っていないかを確かめる。違っていると、apply で同じ内容のルールセットがもう 1 つ作られる。
 
-![](./0/Repository%20creation.png)
-*意図しない公開リポジトリの作成を防ぐため、Private, Public 両方のチェックを外し、管理者しかリポジトリを作成できないようにする*
+**設定を変えるとき** : `.tf` を変える PR を作り、マージしてから main で反映する。
 
-</details>
+```shell
+terraform -chdir=terraform/github plan   # 差分が意図したものだけであることを確かめる
+terraform -chdir=terraform/github apply
+```
 
-<details><summary>🚫 <b>組織のリポジトリを fork できないようにする</b></summary>
-
-🔗 Organization → Settings → Member privileges
-
-![](./0/Repository%20forking.png)
-*チェックを外してください*
-
-</details>
+- `github_organization_settings` と Actions の設定は `prevent_destroy` にしている。destroy すると、billing_email が `email@example.com` に、各設定が既定値に戻るため
+- `organization.tf` は、ベース権限・リポジトリ作成・fork の 3 つだけを管理し、ほかの項目（billing_email・プロフィール・新規リポジトリのセキュリティ機能など）は今の値をそのまま渡す
 
 ---
-## 1. 👥 セキュリティチームを作成
-Gitleaks や Trivy などがセキュリティ検知をした時に対応するチームを作成します。<br/>
-PR でセキュリティ検知された際はこのチームからの Approve がないとマージできない運用にします。
+## 2. 📚 ルールセット
 
-1. Organization → **Teams** → **New team** でチーム「**security**」を作成
-2. 対応者をメンバーに追加
-3. Organization → Settings → **Organization roles** → **Role assignments** → **New role assignment** で、作成したチームに以下の 2 ロールをアサイン:
+security チーム（`teams.tf`）は、Gitleaks や Trivy などがセキュリティ検知をした時に対応するチーム。セキュリティの設定・検知ワークフローを変える PR は、このチームの承認がないとマージできない。
 
-| ロール | 目的 |
-|:------|:----|
-| `Security manager` | 全リポジトリの Read 権限が自動付与され、2.4・2.5 の Required reviewers が**リポジトリごとのチーム登録(Add teams)なしで自動レビュアー指定**されるようになる(新規リポジトリも自動で対象)。org 全体のセキュリティアラートの閲覧・管理権限も付く |
-| `All-repository write` | 承認が Required approvals にカウントされるのは write アクセス保持者のレビューのみのため、Read 相当の Security manager と併用する |
+| ルールセット | 対象 | 内容 |
+|:--|:--|:--|
+| 🚫 main への直接 push 禁止 | 全 repo の default branch | 削除・force push の禁止、PR の必須化 |
+| ✅ PR の承認を必須化 | 全 repo の default branch | 人間の承認 1 名以上。bypass は Renovate 用 GitHub App（`renovate-<org 名>`。PR のときだけ） |
+| 🛡️ 脆弱性・IaC 設定ミス検知 | 全 repo の default branch | `security.yml` の成功を必須にする |
+| ✔️ セキュリティ設定変更の承認必須化 | 全 repo の default branch | `.gitleaksignore` / `.trivyignore` などの変更に security チームの承認を必須にする |
+| 🛠️ 検知ワークフロー変更の承認必須化 | この repo の default branch | `.github/workflows/**`・`.github/actions/**`・`terraform/github/**` の変更に security チームの承認を必須にする。Renovate の PR も対象（bypass しない） |
+| ✏️ スタイルチェック | 全 repo の default branch | `style.yml` の成功を必須にする |
+| 🚫 機密ファイルの push 禁止 | 全 repo | `.env`・秘密鍵・`*.tfstate` などの push を拒否する |
+| 🔒 リリースタグの変更禁止 | この repo の `v*` タグ | タグの更新・削除を禁止する（「5.」） |
 
-※ 自動レビュアー指定が機能するのは「リポジトリへの直接登録(Add teams)」か「Security manager ロール」の場合のみ。`All-repository write` など一般の org role だけでは、承認は可能になるがレビュアーの自動指定はされない。
+> ⚠️ 承認者本人が作成した PR は自己承認できない。security チームのメンバーが 1 人だけの間は、承認を必須にする 3 つのルールセットの bypass に org 管理者が入る（`teams.tf` の `security_members` から決まる）。
 
-> ⚠️ 承認者本人が作成した PR は自己承認できない。チームメンバーが 1 人だけの場合は、
-> ルールセットの **Bypass list** に org 管理者を追加してマージする。
+### 🛡️ 脆弱性・IaC 設定ミス検知
 
----
-## 2. 📚 Organization ルールセットを設定
-Organization ページ → Settings → Repository → Rulesets を選択し、以下のルールを設定して下さい。
-
-> ⚠️ **前提** : branch ruleset(2.1〜2.6)が保護するのは default branch のみ。リリースも default branch(main)のマージ済みコミットから行う運用を前提とする。
-> タグやリリースブランチを起点にデプロイする運用を導入する場合は、レビューを経ないコミットからタグを切れてしまうため、別途 tag ruleset / 対象ブランチの追加が必要。
-> 本リポジトリのリリースタグ(`v*`)の tag ruleset は「5.」で設定する。
-
-### `New branch ruleset`
-
-<details><summary><b>「🚫 main への直接 push 禁止」</b></summary>
-
-| 設定項目 | 値                      |
-|:-------:|:-----------------------|
-| Ruleset Name | `🚫 main への直接 push 禁止` |
-| Enforcement status | `Active`               |
-| Target repositories | `All repositories` |
-| Target branches | `Include default branch` |
-
-Rules セクションで以下にチェック:
-
-- ✅ Restrict deletions (デフォルトブランチの削除を制限する)
-- ✅ Require a pull request before merging (マージ前にプルリクエストを必須とする)
-- ✅ Block force pushes (リモートブランチへの強制プッシュを禁止)
-
-</details>
-
-<details><summary><b>「✅ PR の承認を必須化」</b></summary>
-
-> 全 PR に人間のレビュー承認(1 名以上)がないとマージできないようにするルール
-
-| 設定項目 | 値                        |
-|:-------:|:-------------------------|
-| Ruleset Name | `✅ PR の承認を必須化`         |
-| Enforcement status | `Active`                 |
-| Bypass list | Renovate 用 GitHub App(`renovate-<org 名>`)を `For pull requests only` で追加(下記参照)<br/>開発者が 1 人だけの場合は「1.」の注意書きを参照 |
-| Target repositories | `All repositories`       |
-| Target branches | `Include default branch` |
-
-Rules セクションで以下のチェックを外す:
-
-- ⬜︎ **Restrict deletions**
-- ⬜︎ **Block force pushes**
-
-以下のチェックを入れる:
-
-- ✅ **Require a pull request before merging**
-
-| 設定項目 | 値 |
-|:--------|:--|
-| Required approvals | `1` |
-| Dismiss stale pull request approvals when new commits are pushed | ✅(承認後に push されたコミットが再レビューなしでマージされるのを防ぐ) |
-| Require review from Code Owners | ❌ |
-| Require approval of the most recent reviewable push | ❌ |
-| Require conversation resolution before merging | ❌ |
-| Allowed merge methods | `Merge` / `Squash` / `Rebase`(すべて許可) |
-
-※ 承認が Required approvals にカウントされるのは write アクセス保持者のレビューのみ。PR 作成者本人による自己承認はできない。<br/>
-※ Renovate の更新 PR を承認なしで自動マージするため、Renovate 用 GitHub App を Bypass list に追加する。必須ワークフローのルールセット(2.3・2.6)には追加しないこと(失敗した検査を無視してマージされるようになる)
-
-</details>
-
-<details><summary><b>「🛡️ 脆弱性・IaC 設定ミス検知」</b></summary>
-
-| 設定項目 | 値 |
-|:-------:|:--|
-| Ruleset Name | `🛡️ 脆弱性・IaC 設定ミス検知` |
-| Enforcement status | `Active` |
-| Bypass list | 空のまま |
-| Target repositories | `All repositories` |
-| Target branches | `Include default branch` |
-
-Rules セクションで以下のチェックを外す:
-
-- ⬜︎ **Restrict deletions**
-- ⬜︎ **Block force pushes**
-
-以下のチェックを入れる:
-
-- ✅ **Require workflows to pass before merging** (PRマージ前に指定したワークフローの成功を必須にする) — 「Add workflow」から以下を追加:
-
-| Repository | Branch | Workflow |
-|:-----------|:-------|:---------|
-| `github-workflows` | `main` | `.github/workflows/security.yml` |
-
-`security.yml` は次を検査する。常に動くのは `scan` の job だけで、PR のコードは実行しない(イメージのビルドは `scan-image` の job で行う)。
+`security.yml` は次を検査する。常に動くのは `scan` の job だけで、PR のコードは実行しない（イメージのビルドは `scan-image` の job で行う）。
 
 | 検査 | 内容 |
 |:----|:----|
-| Gitleaks | PR のコミットに混入したシークレット(圧縮ファイルの中も含む) |
-| ghalint | ワークフローのセキュリティポリシー(permissions 未設定・action の SHA 未固定など)。ワークフローを変更したときだけ |
-| zizmor | GitHub Actions の設定の脆弱性(severity HIGH 以上)。ワークフロー・action 定義などを変更したときだけ |
-| Semgrep | アプリケーションコード(ルールセット `p/default`・severity ERROR)。PR で新規に増えた検出のみ |
-| Trivy | 依存パッケージの脆弱性と IaC の設定ミス(MEDIUM 以上・修正版があるもの)、Dockerfile からビルドしたイメージの脆弱性 |
+| Gitleaks | PR のコミットに混入したシークレット（圧縮ファイルの中も含む） |
+| ghalint | ワークフローのセキュリティポリシー（permissions 未設定・action の SHA 未固定など）。ワークフローを変更したときだけ |
+| zizmor | GitHub Actions の設定の脆弱性（severity HIGH 以上）。ワークフロー・action 定義などを変更したときだけ |
+| Semgrep | アプリケーションコード（ルールセット `p/default`・severity ERROR）。PR で新規に増えた検出のみ |
+| Trivy | 依存パッケージの脆弱性と IaC の設定ミス（MEDIUM 以上・修正版があるもの）、Dockerfile からビルドしたイメージの脆弱性 |
 
-- ✅ **Do not require workflows on creation**
-
-</details>
-
-<details><summary><b>「✔️ セキュリティ設定ファイル変更の承認必須化」</b></summary>
-
-> セキュリティ検知の設定ファイル(`.gitleaksignore` / `.trivyignore` など)を変更する PR にセキュリティチーム(`security`)の承認を必須化するルール
-
-| 設定項目 | 値                        |
-|:-------:|:-------------------------|
-| Ruleset Name | `✔️ セキュリティ設定変更の承認必須化`    |
-| Enforcement status | `Active`                 |
-| Bypass list | 空のまま<br/>承認者が 1 人だけの場合は「1.」の注意書きを参照                |
-| Target repositories | `All repositories`       |
-| Target branches | `Include default branch` |
-
-Rules セクションで以下のチェックを外す:
-
-- ⬜︎ **Restrict deletions**
-- ⬜︎ **Block force pushes**
-
-以下のチェックを入れる:
-
-- ✅ **Require a pull request before merging**
-
-| 設定項目 | 値 |
-|:--------|:--|
-| Required approvals | `0`(承認必須化は下記の Required reviewers で行う) |
-| Dismiss stale pull request approvals when new commits are pushed | ✅ |
-| Require review from Code Owners | ❌ |
-| Require approval of the most recent reviewable push | ❌ |
-| Require conversation resolution before merging | ❌ |
-| Allowed merge methods | `Merge` / `Squash` / `Rebase`(すべて許可) |
-
-同ルール内の **Require review from specific teams** に以下を追加:
-
-| 設定項目 | 値                                                                                                                                                                                                        |
-|:--------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Reviewer | `security` チーム(「1.」で作成)                                                                                                                                                                                  |
-| Approvals | `1`                                                                                                                                                                                                      |
-
-File patterns:
-```
-.gitleaksignore
-.gitleaks.toml
-.trivyignore
-.trivyignore.yaml
-trivy.yaml
-.github/trivy-image.yml
-.github/trivy-image.yaml
-.github/zizmor.yml
-.semgrepignore
-**/.semgrepignore
-ghalint.yml
-ghalint.yaml
-.ghalint.yml
-.ghalint.yaml
-.github/ghalint.yml
-.github/ghalint.yaml
-```
-
-※ `trivy.yaml`(リポジトリ直下)は Trivy が自動読込する設定ファイルで、`ignorefile` / `ignore-policy` により抑制先を差し替えられるため対象に含める。レビュー時はこの 2 項目が上記対象外のファイルを指していないかを確認する<br/>
-※ `**/.semgrepignore` は Semgrepignore v2(Semgrep 1.117 以降のデフォルト)でサブディレクトリの `.semgrepignore` も有効になるため対象に含める<br/>
-※ zizmor の設定はワークフロー側(`.github/actions/zizmor` の `--config` / `--no-config`)で `.github/zizmor.yml` に固定しているため、自動探索され得る他パス(リポジトリ直下の `zizmor.yml` 等)の列挙は不要
-
-</details>
-
-<details><summary><b>「🛠️ 検知ワークフロー変更の承認必須化」</b></summary>
-
-> 必須ワークフローの実体(本リポジトリの `.github/workflows/` と、そこから使う `.github/actions/`)を変更する PR にセキュリティチーム(`security`)の承認を必須化するルール。
-> 必須ワークフロー(2.3・2.6)は本リポジトリの `main` 上の定義を参照しているため、検知を弱める変更(severity の引き下げ・`exit-code: 0` 化など)が通常の承認(2.2)だけで通ると org 全体の検知が無効化されてしまう
-> Claude ワークフロー(`.github/workflows/claude*.yml`)も呼び出し側の全リポジトリで write 権限付きのプロンプトとして動くため、同じ File patterns(`.github/workflows/**`)で本ルールの対象になる
-
-| 設定項目 | 値                        |
-|:-------:|:-------------------------|
-| Ruleset Name | `🛠️ 検知ワークフロー変更の承認必須化`    |
-| Enforcement status | `Active`                 |
-| Bypass list | Renovate 用 GitHub App(`renovate-<org 名>`)を `For pull requests only` で追加(「✅ PR の承認を必須化」を参照)<br/>承認者が 1 人だけの場合は「1.」の注意書きを参照 |
-| Target repositories | `Select repositories` → `github-workflows` のみ |
-| Target branches | `Include default branch` |
-
-Rules セクションで以下のチェックを外す:
-
-- ⬜︎ **Restrict deletions**
-- ⬜︎ **Block force pushes**
-
-以下のチェックを入れる:
-
-- ✅ **Require a pull request before merging**
-
-| 設定項目 | 値 |
-|:--------|:--|
-| Required approvals | `0`(承認必須化は下記の Required reviewers で行う) |
-| Dismiss stale pull request approvals when new commits are pushed | ✅ |
-| Require review from Code Owners | ❌ |
-| Require approval of the most recent reviewable push | ❌ |
-| Require conversation resolution before merging | ❌ |
-| Allowed merge methods | `Merge` / `Squash` / `Rebase`(すべて許可) |
-
-同ルール内の **Require review from specific teams** に以下を追加:
-
-| 設定項目 | 値 |
-|:--------|:--|
-| Reviewer | `security` チーム(「1.」で作成) |
-| Approvals | `1` |
-
-File patterns:
-```
-.github/workflows/**
-.github/actions/**
-```
-
-※ 必須ワークフローは、検知の処理(ツールのオプション・インライン ignore の禁止など)を composite action(`.github/actions/`)に置き、SHA で参照している。参照する SHA を上げる PR だけでは処理の差分が見えないため、action の変更も対象にする。レビューでは、参照する SHA が main に含まれるコミットであることも確認する
-
-</details>
-
-<details><summary><b>「✏️ スタイルチェック」</b></summary>
-
-> コードのスタイルチェックを必須化するルール。セキュリティ検知(2.3〜2.5)とは性質が異なるため別ルールセットで管理する
-
-| 設定項目 | 値                        |
-|:-------:|:-------------------------|
-| Ruleset Name | `✏️ スタイルチェック`            |
-| Enforcement status | `Active`                 |
-| Bypass list | 空のまま(下記「例外運用」を参照)        |
-| Target repositories | `All repositories`(同上)  |
-| Target branches | `Include default branch` |
-
-Rules セクションで以下のチェックを外す:
-
-- ⬜︎ **Restrict deletions**
-- ⬜︎ **Block force pushes**
-
-以下のチェックを入れる:
-
-- ✅ **Require workflows to pass before merging** (PRマージ前に指定したワークフローの成功を必須にする) — 「Add workflow」から以下を追加:
-
-| Repository | Branch | Workflow |
-|:-----------|:-------|:---------|
-| `github-workflows` | `main` | `.github/workflows/style.yml` |
+### ✏️ スタイルチェック
 
 `style.yml` は次を検査する。常に動くのは `lint` の job だけで、ほかの job は対象のファイルがあるときだけ動く。
 
 | job | 検査内容 |
 |:----|:--------|
-| `lint` | ワークフロー定義の構文(actionlint)・シェルスクリプトの lint(shellcheck)・Terraform の書式(terraform fmt)と lint(tflint。terraform ruleset の `all` プリセット + aws / google ruleset。設定は全リポジトリ共通で固定)・Python の規約(uv での依存管理)・lint・書式・セキュリティ(ruff の `S` ルール) |
-| `terraform` | Terraform の validate・lock ファイルと `required_providers` の整合・test(`*.tftest.hcl`) |
-| `python` | Python の型(Pyright)・モジュールの依存関係(lint-imports)・不要なパッケージ(deptry)。`uv.lock` のあるディレクトリごと |
-| `typescript` | TypeScript の規約(Bun での依存管理)・lint・書式・型・未使用パッケージ |
-| `bundle-size-measure` / `bundle-size-comment` | フロントエンド(Next.js / Astro)の JS・CSS の gzip 後のサイズの増減を PR にコメント(報告だけで失敗しない) |
+| `lint` | ワークフロー定義の構文（actionlint）・シェルスクリプトの lint（shellcheck）・Terraform の書式（terraform fmt）と lint（tflint。terraform ruleset の `all` プリセット + aws / google ruleset。設定は全リポジトリ共通で固定）・Python の規約（uv での依存管理）・lint・書式・セキュリティ（ruff の `S` ルール） |
+| `terraform` | Terraform の validate・lock ファイルと `required_providers` の整合・test（`*.tftest.hcl`） |
+| `python` | Python の型（Pyright）・モジュールの依存関係（lint-imports）・不要なパッケージ（deptry）。`uv.lock` のあるディレクトリごと |
+| `typescript` | TypeScript の規約（Bun での依存管理）・lint・書式・型・未使用パッケージ |
+| `bundle-size-measure` / `bundle-size-comment` | フロントエンド（Next.js / Astro）の JS・CSS の gzip 後のサイズの増減を PR にコメント（報告だけで失敗しない） |
 
-> 必須ワークフローは、対象 repo のコードを実行してよい(`python` / `typescript` の job の `uv sync` / `bun install` による依存導入と、その環境上で動く Pyright / lint-imports / deptry / Biome / knip / tsc、`terraform` の job の `terraform init` / `validate` / `test` が実行する provider・module、`bundle-size-measure` の job の `bun install` とビルドなど)。ただし次を守る。
-> - `permissions` は read のみとし、secrets を使わない(例外: `terraform` の job の `terraform init` の step にだけ、private の Module Registry(registry.fastship.jp)の読み取りトークン `REGISTRY_TOKEN` を渡す。PR にコメントする `bundle-size-comment` の job にだけ `pull-requests: write` を付ける。この job は checkout せず、PR のコードを動かさない)。トリガーは `pull_request` とし、`pull_request_target` では動かさない
+> 必須ワークフローは、対象 repo のコードを実行してよい（`style.yml` の `python` / `typescript` job の `uv sync` / `bun install` による依存導入と、その環境上で動く Pyright / lint-imports / deptry / Biome / knip / tsc、`terraform` job の `terraform init` / `validate` / `test` が実行する provider・module、`bundle-size-measure` job の `bun install` とビルドなど）。ただし次を守る。
+> - `permissions` は read のみとし、secrets を使わない（例外: `terraform` job の `terraform init` の step にだけ、private の Module Registry（registry.fastship.jp）の読み取りトークン `REGISTRY_TOKEN` を渡す。PR にコメントする `bundle-size-comment` job にだけ `pull-requests: write` を付ける。この job は checkout せず、PR のコードを動かさない）。トリガーは `pull_request` とし、`pull_request_target` では動かさない
 > - `actions/checkout` は `persist-credentials: false` にする
-> - PR のコードを実行する処理は `lint` と別の job にし、対象のファイルがあるときだけ動かす(常に動く `lint` の job では PR のコードを実行しない)
+> - PR のコードを実行する処理は `lint` と別の job にし、対象のファイルがあるときだけ動かす（常に動く `lint` の job では PR のコードを実行しない）
 > - repo の環境に依存して失敗し得る前提は、下の「導入時の前提」に書く。対応できない repo は「例外運用」で外す
 >
 > この条件なら、PR のコードが動いても、その repo の通常の CI と同じで越えられる権限の境界は無い。
 >
-> バンドルサイズは、PR のコードを動かす計測の job(`bundle-size-measure`)を read のみにし、その結果を artifact で受け取ってコメントする job だけに `pull-requests: write` を付ける。依存パッケージが侵害されても write のトークンは読めず、コメントの投稿先もその PR に固定される。public repo の fork からの PR では、トークンが read のみになるためコメントされない(マージは止めない)。
+> バンドルサイズは、PR のコードを動かす計測の job（`bundle-size-measure`）を read のみにし、その結果を artifact で受け取ってコメントする job（`bundle-size-comment`）だけに `pull-requests: write` を付ける。依存パッケージが侵害されても write のトークンは読めず、コメントの投稿先もその PR に固定される。public repo の fork からの PR では、トークンが read のみになるためコメントされない（マージは止めない）。
 >
-> 検査の対象や厳しさ、src レイアウトの自パッケージの解決は、対象 repo の設定ファイル(`[tool.pyright]` / `pyrightconfig.json` / `[tool.deptry]` / `[build-system]` / `biome.json` / `knip.json` / `tsconfig.json` など)に従う。
+> 検査の対象や厳しさ、src レイアウトの自パッケージの解決は、対象 repo の設定ファイル（`[tool.pyright]` / `pyrightconfig.json` / `[tool.deptry]` / `[build-system]` / `biome.json` / `knip.json` / `tsconfig.json` など）に従う。
 > ただし tflint の設定は `style.yml` に埋め込んで固定しており、対象 repo の `.tflint.hcl` とインラインの `tflint-ignore` コメントは使えない。
 
 **導入時の前提** : 次に当てはまる repo は、対応するまで必須チェックが fail する。
 
-1. Pyright の型エラーがある(検査対象と厳しさは `uv.lock` のあるディレクトリの `[tool.pyright]` / `pyrightconfig.json` に従い、workspace のメンバーの設定は読まない。設定が無ければそのディレクトリ全体を standard モードで検査し、別の `uv.lock` を持つ入れ子のディレクトリは除く。設定を書いた場合は、入れ子のディレクトリを `exclude` に入れる。`extends` で読む共有の設定は `pyright*.json` という名前にする (それだけを変えた PR でも検査が動く)。`include` に存在しないパスがある・知らない設定や不正な値がある・利用者の設定で検査するファイルが 0 件のときも fail する。mypy の設定は使わない)
-2. `autogenerated by uv` で始まらない `requirements*.txt` を依存管理に使っている(`pyproject.toml` の隣にあるもの、`pyproject.toml` が無い repo では Python コードがある場合のみ対象)
-3. `bun.lock` をコミットしていない(`bun install --frozen-lockfile` が失敗する)
-4. `@biomejs/biome` / `knip` / `typescript` を devDependencies に持たない(`package.json` がある repo のみ対象)
-5. ruff の `S` ルール(bandit 相当。`S101` を除く)に違反している(repo の `ignore` では外せない。誤検知は `# noqa: Sxxx` か `per-file-ignores` で個別に外す)
-6. `.terraform.lock.hcl` に linux_amd64 のハッシュが無い(`terraform init -lockfile=readonly` で provider を検証できない。`terraform providers lock -platform=linux_amd64 -platform=darwin_arm64` などで追記する)
-7. `terraform test` がクラウドの認証情報を必要とする(認証情報は渡さないため、`command = plan` と `mock_provider` で完結するテストだけが通る)
-8. Terraform 1.16.0(`style.yml` で固定)で動かない `required_version` を宣言している
-9. tflint(`style.yml` の固定設定)の違反がある、または `.tf` に `tflint-ignore` コメントがある(違反は変更したディレクトリのみ検査するが、`tflint-ignore` の禁止は repo 全体が対象)
-10. registry.fastship.jp のモジュールを使っているのに、Organization の secret `REGISTRY_TOKEN` へのアクセスが許可されていない(`terraform init` が 401 で失敗する)
+1. Pyright の型エラーがある（検査対象と厳しさは `uv.lock` のあるディレクトリの `[tool.pyright]` / `pyrightconfig.json` に従い、workspace のメンバーの設定は読まない。設定が無ければそのディレクトリ全体を standard モードで検査し、別の `uv.lock` を持つ入れ子のディレクトリは除く。設定を書いた場合は、入れ子のディレクトリを `exclude` に入れる。`extends` で読む共有の設定は `pyright*.json` という名前にする (それだけを変えた PR でも検査が動く)。`include` に存在しないパスがある・知らない設定や不正な値がある・利用者の設定で検査するファイルが 0 件のときも fail する。mypy の設定は使わない）
+2. `autogenerated by uv` で始まらない `requirements*.txt` を依存管理に使っている（`pyproject.toml` の隣にあるもの、`pyproject.toml` が無い repo では Python コードがある場合のみ対象）
+3. `bun.lock` をコミットしていない（`bun install --frozen-lockfile` が失敗する）
+4. `@biomejs/biome` / `knip` / `typescript` を devDependencies に持たない（`package.json` がある repo のみ対象）
+5. ruff の `S` ルール（bandit 相当。`S101` を除く）に違反している（repo の `ignore` では外せない。誤検知は `# noqa: Sxxx` か `per-file-ignores` で個別に外す）
+6. `.terraform.lock.hcl` に linux_amd64 のハッシュが無い（`terraform init -lockfile=readonly` で provider を検証できない。`terraform providers lock -platform=linux_amd64 -platform=darwin_arm64` などで追記する）
+7. `terraform test` がクラウドの認証情報を必要とする（認証情報は渡さないため、`command = plan` と `mock_provider` で完結するテストだけが通る）
+8. Terraform 1.16.0（`style.yml` で固定）で動かない `required_version` を宣言している
+9. tflint（`style.yml` の固定設定）の違反がある、または `.tf` に `tflint-ignore` コメントがある（違反は変更したディレクトリのみ検査するが、`tflint-ignore` の禁止は repo 全体が対象）
+10. registry.fastship.jp のモジュールを使っているのに、Organization の secret `REGISTRY_TOKEN` へのアクセスが許可されていない（`terraform init` が 401 で失敗する）
 
-バンドルサイズの計測は、サイズが増えても、ビルドの失敗やタイムアウト(40 分)でも fail しないため、前提は無い。ただし次の場合は計測されない、または一部だけが計測される。
+バンドルサイズの計測は、サイズが増えても、ビルドの失敗やタイムアウト（40 分）でも fail しないため、前提は無い。ただし次の場合は計測されない、または一部だけが計測される。
 
-- PR がフロントエンドのディレクトリ配下を変更していない(2 回のビルドを省くため)
-- `package.json` と同じディレクトリに `bun.lock` / `bun.lockb` が無い(workspace の子など)
-- ビルドに環境変数や secrets が要る(PR に「計測できませんでした」とコメントされる)
-- Next.js を webpack でビルドしている(計測するのは Turbopack の出力先 `.next/static/chunks/` だけで、`.next/static/css/` の CSS は含まない)
-- Next.js の `distDir` を変えている、または Astro の adapter が出力先を `dist/` 以外にしている(ファイルが見つからず、増減なしと出る)
+- PR がフロントエンドのディレクトリ配下を変更していない（2 回のビルドを省くため）
+- `package.json` と同じディレクトリに `bun.lock` / `bun.lockb` が無い（workspace の子など）
+- ビルドに環境変数や secrets が要る（PR に「計測できませんでした」とコメントされる）
+- Next.js を webpack でビルドしている（計測するのは Turbopack の出力先 `.next/static/chunks/` だけで、`.next/static/css/` の CSS は含まない）
+- Next.js の `distDir` を変えている、または Astro の adapter が出力先を `dist/` 以外にしている（ファイルが見つからず、増減なしと出る）
 
-**例外運用** : ランナーで依存を導入できない repo(private index の認証が必要など)が出た場合だけ、その repo を `Bypass list` に追加するか、`Target repositories` を `Dynamic list by property` 等に変更して対象から外す。規約・lint・書式の検査も併せて外れる。
-
-- ✅ **Do not require workflows on creation**
-
-</details>
-
-
-### `New push ruleset`
-
-<details><summary><b>「🚫 機密ファイルの push 禁止」</b></summary>
-
-秘密鍵や `.env` などの機密ファイルを、履歴に入る前にサーバー側で拒否する push ルールセット
-(Gitleaks は PR 時の検知のため、検知された時点で秘密情報はリモートの履歴に残っている)。
-ファイル内容に対するコミット前のローカル検知は各リポジトリの git hook(任意運用)が担う。
-2.1〜2.6 とは種類が異なり「**New push ruleset**」から作成する。
-
-| 設定項目 | 値 |
-|:-------:|:--|
-| Ruleset Name | `🚫 機密ファイルの push 禁止` |
-| Enforcement status | `Active` |
-| Bypass list | 空のまま |
-| Target repositories | `All repositories` |
-
-Rules セクションで以下を設定:
-
-✅ **Restrict file paths**
-
-| File path |
-|:----------|
-| `.env` |
-| `**/.env` |
-| `id_rsa` |
-| `**/id_rsa` |
-| `id_ed25519` |
-| `**/id_ed25519` |
-
-※ `.env.example` 等のテンプレートを誤ブロックしないよう `.env.*` は対象にしない(実値が入った `.env.*` は Gitleaks が検知する)。
-
-✅ **Restrict file extensions**
-
-| Extension |
-|:----------|
-| `pem` / `key` / `p12` / `pfx` / `jks` / `keystore` / `tfstate` / `tfplan` |
-
-※ `tfplan`(`terraform plan -out` の出力)は、`sensitive` な値も含めて平文で入る。
-
-✅ **Restrict file size** — `5MB`
-
-</details>
+**例外運用** : ランナーで依存を導入できない repo（private index の認証が必要など）が出た場合だけ、`rulesets.tf` の `style_check` の `conditions.repository_name.exclude` にその repo を足して apply し、対象から外す。規約・lint・書式の検査も併せて外れる。
 
 ---
 ## 3. ⚙️ GitHub Actions のセキュリティ設定
 
-Organization → Settings → **Actions** → **General** で以下を設定する。
+実行できる action は、Organization のもの・GitHub 製・`actions.tf` の許可リストに限っている。各リポジトリが新しい外部 action を使う場合は、許可リストに足して apply する（SHA ピン留めは各ワークフロー側で行う）。
 
-<details><summary><b>Actions permissions(実行できる action の制限)</b></summary>
-
-| 設定項目 | 値 |
-|:--------|:--|
-| Policies | `Allow <org>, and select non-<org> actions and reusable workflows` |
-| Allow actions created by GitHub | ✅ |
-| Allow specified actions and reusable workflows | 下記のパターンを登録 |
-
-```
-anthropics/claude-code-action@*,
-aquasecurity/trivy-action@*,
-astral-sh/ruff-action@*,
-astral-sh/setup-uv@*,
-docker/setup-buildx-action@*,
-docker/build-push-action@*,
-dorny/paths-filter@*,
-google-github-actions/auth@*,
-hashicorp/setup-terraform@*,
-jdx/mise-action@*,
-oven-sh/setup-bun@*,
-preactjs/compressed-size-action@*,
-renovatebot/github-action@*,
-terraform-linters/setup-tflint@*
-```
-
-※ 各リポジトリが新しい外部 action を使う場合はこのリストへの追加が必要(SHA ピン留めは各ワークフロー側で行う)。<br/>
-※ `oven-sh/setup-bun` は `anthropics/claude-code-action` が内部で使用する action のため併せて許可する(「4.」)。<br/>
-※ `astral-sh/ruff-action` / `astral-sh/setup-uv` は `style.yml`(「2.」の必須ワークフロー)の Python の検査が使用する。<br/>
-※ `hashicorp/setup-terraform` / `terraform-linters/setup-tflint` は `style.yml`(「2.」の必須ワークフロー)の Terraform の検査が使用する。<br/>
-※ `google-github-actions/auth` は Workload Identity 連携で Google Cloud に認証する公式 action(各リポジトリの Terraform plan / apply が使用する)。<br/>
-※ `jdx/mise-action` は app.fastship.jp の CI(`py-check.yml` / `py-test.yml`)が、`mise.toml`・`mise.lock` の版で task・uv などを入れるために使用する(組織の必須ワークフローが効かない個人ユーザーのリポジトリでも CI を動かすため)。<br/>
-※ `preactjs/compressed-size-action` は `style.yml`(「2.」の必須ワークフロー)が、フロントエンドのバンドルサイズの増減を PR にコメントするために使用する。
-
-</details>
-
-<details><summary><b>Workflow permissions(<code>GITHUB_TOKEN</code> のデフォルト権限)</b></summary>
-
-| 設定項目 | 値 |
-|:--------|:--|
-| Workflow permissions | `Read repository contents and packages permissions` |
-| Allow GitHub Actions to create and approve pull requests | ❌(チェックを外す) |
-
-- `permissions:` を明示しているワークフロー(本リポジトリのものを含む)には影響しない
-- 「create and approve pull requests」を無効化することで、`GITHUB_TOKEN` による自己承認で 2.2 / 2.4 / 2.5 の承認必須化が迂回されるのを防ぐ
-
-</details>
+`GITHUB_TOKEN` のデフォルト権限は read で、PR を承認できない。`GITHUB_TOKEN` による自己承認で、承認を必須にするルールセットが迂回されるのを防ぐ。`permissions:` を明示しているワークフロー（本リポジトリのものを含む）には影響しない。
 
 ---
 ## 4. 🧠 Claude ワークフロー
 
-### 4.1 組織シークレットを登録する
+### 4.1 組織シークレットを登録する（手作業）
 
-🔗 Organization → Settings → Secrets and variables → Actions → **New organization secret**
-
-以下の**どちらか一方**を登録し、Repository access は `Private repositories` にする。public リポジトリにはリポジトリシークレットとしても登録しない(fork PR の差分経由でトークンを読み出される恐れがあるため)。
+値が tfstate に平文で入るため、Terraform では管理しない。以下の**どちらか一方**を、Repository access を `Private repositories` にして登録する。public リポジトリにはリポジトリシークレットとしても登録しない（fork PR の差分経由でトークンを読み出される恐れがあるため）。
 
 | Name | 値 |
 |:-----|:--|
-| `CLAUDE_CODE_OAUTH_TOKEN` | `claude setup-token` で発行した OAuth トークン(Pro / Max プラン) |
+| `CLAUDE_CODE_OAUTH_TOKEN` | `claude setup-token` で発行した OAuth トークン（Pro / Max プラン） |
 | `ANTHROPIC_API_KEY` | Anthropic API キー |
 
-### 4.2 Claude GitHub App をインストールする
+```shell
+gh secret set CLAUDE_CODE_OAUTH_TOKEN --org theindiehacker --visibility private  # 値は標準入力から入れる
+```
 
-https://github.com/apps/claude を Organization にインストールし、Repository access を `All repositories` にする。
+### 4.2 Claude GitHub App をインストールする（手作業）
+
+https://github.com/apps/claude を Organization にインストールし、Repository access を `All repositories` にする（App のインストールは API で行えない）。
 
 ### 4.3 各リポジトリに呼び出し側のワークフローを追加する
 
-1. 最新のリリースタグ(例: `v1.0.0`)のコミット SHA を確認する(`^{}` の行があればそちらを使う)
+1. 最新のリリースタグ（例: `v1.0.0`）のコミット SHA を確認する（`^{}` の行があればそちらを使う）
 
 ```shell
 git ls-remote https://github.com/theindiehacker/github-workflows 'refs/tags/v1.0.0^{}' 'refs/tags/v1.0.0'
@@ -496,65 +198,41 @@ git ls-remote https://github.com/theindiehacker/github-workflows 'refs/tags/v1.0
 
 3. main にマージ後、PR を作るとコードレビューが自動で投稿されることを確認する (再レビューは PR に `/code-review` とコメントする)
 
-> 💡 本リポジトリは `github-workflows` → `devops` → `github-workflows` と改名した。git clone や API は旧名からリダイレクトされるが、`uses:` はリダイレクトされず、旧名の `uses: theindiehacker/devops/...` はワークフローの起動時点で失敗する。そのため `theindiehacker/github-workflows/...` に書き換える(旧名 `devops` でリポジトリを作り直すと参照先が乗っ取られるため、旧名は再利用しない)。ruleset はリポジトリ名ではなく ID で紐付くため、改名後の再設定は不要
+> 💡 本リポジトリは `github-workflows` → `devops` → `github-workflows` と改名した。git clone や API は旧名からリダイレクトされるが、`uses:` はリダイレクトされず、旧名の `uses: theindiehacker/devops/...` はワークフローの起動時点で失敗する。そのため `theindiehacker/github-workflows/...` に書き換える（旧名 `devops` でリポジトリを作り直すと参照先が乗っ取られるため、旧名は再利用しない）。ruleset はリポジトリ名ではなく ID で紐付くため、改名後の再設定は不要
 
 ---
 ## 5. 🏷️ リリースタグ
 
-呼び出し側が reusable workflow(「4.」)を `@<SHA>  # vX.Y.Z` で参照し、Renovate で更新できるようにするため、本リポジトリには semver のリリースタグを付ける。
+呼び出し側が reusable workflow（「4.」）を `@<SHA>  # vX.Y.Z` で参照し、Renovate で更新できるようにするため、本リポジトリには semver のリリースタグを付ける。
 
 **リリースの手順** : 🔗 本リポジトリ → Actions → **🏷️ Release** → **Run workflow**
 
-1. Branch は `main` のまま、`bump` で上げるバージョン(下表)を選んで実行する
-2. main の先頭のコミットに、次のバージョンのタグ `vX.Y.Z` と GitHub Release(リリースノートは前回のタグ以降の PR から自動生成)が作られる
+1. Branch は `main` のまま、`bump` で上げるバージョン（下表）を選んで実行する
+2. main の先頭のコミットに、次のバージョンのタグ `vX.Y.Z` と GitHub Release（リリースノートは前回のタグ以降の PR から自動生成）が作られる
 3. 呼び出し側の Renovate が新しいタグを検出し、参照の更新 PR を作る
 
 | bump | 対象 |
 |:----|:----|
-| `major` | 呼び出し側の変更が必要なもの(`on:`・job の `permissions`・`secrets`・`inputs` の追加や変更、トリガーのコメントの変更など) |
-| `minor` | 呼び出し側の変更が不要な機能追加・挙動の変更(モデルの変更など) |
+| `major` | 呼び出し側の変更が必要なもの（`on:`・job の `permissions`・`secrets`・`inputs` の追加や変更、トリガーのコメントの変更など） |
+| `minor` | 呼び出し側の変更が不要な機能追加・挙動の変更（モデルの変更など） |
 | `patch` | 不具合の修正、action・ツールの更新 |
 
-- 前回のリリース以降に入った変更のうち、いちばん大きい区分を選ぶ。呼び出し側の挙動が変わらない変更(ドキュメントなど)だけならリリースしない
+- 前回のリリース以降に入った変更のうち、いちばん大きい区分を選ぶ。呼び出し側の挙動が変わらない変更（ドキュメントなど）だけならリリースしない
 - タグがまだ無い場合は、`bump` に関係なく `v1.0.0` になる
-- main の先頭にすでにタグが付いている場合は、何も作らずに失敗で終わる(新しい変更をマージしてから実行し直す)
+- main の先頭にすでにタグが付いている場合は、何も作らずに失敗で終わる（新しい変更をマージしてから実行し直す）
 - `main` 以外のブランチを選んだ場合は job が skip される
-- タグは `GITHUB_TOKEN` で作るため、タグの作成は制限していない。write 権限を持つメンバーは、ワークフローの書き換えや直接の push でレビューを経ないコミットにもタグを付けられる(呼び出し側ではマイナー・パッチの更新が自動マージされる)。write 権限は信頼できるメンバーだけに付与する
+- タグは `GITHUB_TOKEN` で作るため、タグの作成は制限していない。write 権限を持つメンバーは、ワークフローの書き換えや直接の push でレビューを経ないコミットにもタグを付けられる（呼び出し側ではマイナー・パッチの更新が自動マージされる）。write 権限は信頼できるメンバーだけに付与する
 - 実行は 1 回ずつ行う。実行中に続けて 2 回以上実行すると、待機中の実行は最後の 1 回に置き換えられる
 
-<details><summary><b>タグを変えられないようにする(tag ruleset)</b></summary>
+付けたタグは「🔒 リリースタグの変更禁止」（「2.」）で更新・削除できない。誤ったタグを付けた場合も付け替えず、修正を入れた次のバージョンを出す。
 
-付けたタグが別のコミットに付け替えられると、`# vX.Y.Z` のコメントと実際の SHA がずれ、Renovate の更新も壊れるため、タグの更新・削除を禁止する。
-
-🔗 Organization → Settings → Repository → Rulesets → **New ruleset** → **New tag ruleset**
-
-**「🔒 リリースタグの変更禁止」**
-
-| 設定項目 | 値 |
-|:-------:|:--|
-| Ruleset Name | `🔒 リリースタグの変更禁止` |
-| Enforcement status | `Active` |
-| Bypass list | 空のまま |
-| Target repositories | `Select repositories` → `github-workflows` のみ |
-| Target tags | `Include by pattern` → `v*` |
-
-Rules セクションで以下にチェック:
-
-- ✅ Restrict updates
-- ✅ Restrict deletions
-- ✅ Block force pushes
-
-※ 誤ったタグを付けた場合も付け替えず、修正を入れた次のバージョンを出す。
-
-</details>
-
-<details><summary><b>Immutable releases を有効にする</b></summary>
+<details><summary><b>Immutable releases を有効にする</b>（手作業）</summary>
 
 🔗 本リポジトリ → Settings → General → Releases
 
 - ✅ **Enable release immutability**
 
-公開済みの GitHub Release のタグとアセットを変更・削除できなくなる(有効化より前に作った Release には適用されない)。tag ruleset と合わせて、リリースタグが指すコミットを固定する。
-最初のリリース(`v1.0.0`)の前に有効にしておく。
+公開済みの GitHub Release のタグとアセットを変更・削除できなくなる（有効化より前に作った Release には適用されない）。tag ruleset と合わせて、リリースタグが指すコミットを固定する。
+最初のリリース（`v1.0.0`）の前に有効にしておく。Terraform の provider が対応していないため、UI で設定する。
 
 </details>
