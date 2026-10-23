@@ -1,0 +1,20 @@
+name: "バンドルサイズの計測対象を判定"
+description: >-
+  package.json の依存に next / astro を持ち、同じディレクトリに bun.lock / bun.lockb があるディレクトリを規約で検出する。
+  PR がそのディレクトリ配下を変更したものだけを計測対象にする（checkout は fetch-depth: 2 にしておく）
+
+outputs:
+  frontends:
+    description: "フロントエンドが 1 つでもあれば true（前回のコメントを書き換えるかの判定に使う）"
+    value: ${{ steps.collect.outputs.frontends }}
+  targets:
+    description: "計測対象（dir / pattern / changed / key）の JSON 配列"
+    value: ${{ steps.collect.outputs.targets }}
+
+runs:
+  using: composite
+  steps:
+    - name: "計測対象を収集"
+      id: collect
+      shell: bash
+      run: bash "${GITHUB_ACTION_PATH}/bundle-size-targets.sh"

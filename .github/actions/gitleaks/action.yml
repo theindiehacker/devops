@@ -1,0 +1,24 @@
+name: "Gitleaks でシークレットを検知"
+description: "gitleaks を SHA-256 を検証して導入し、PR のコミット範囲をスキャンする"
+
+inputs:
+  version:
+    description: "gitleaks の GitHub release のタグ名 (v8.30.1 など)"
+    required: true
+  sha256:
+    description: "linux x64 のアーカイブの SHA-256"
+    required: true
+  log-opts:
+    description: "スキャンするコミット範囲 (<base>..<head>)"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: "Gitleaks スキャン"
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        SHA256: ${{ inputs.sha256 }}
+        LOG_OPTS: ${{ inputs.log-opts }}
+      run: bash "${GITHUB_ACTION_PATH}/gitleaks.sh"

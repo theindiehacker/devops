@@ -1,0 +1,20 @@
+name: "ghalint で workflow のセキュリティポリシーを検査"
+description: "ghalint を SHA-256 を検証して導入し、.github/workflows/ 全体を検査する"
+
+inputs:
+  version:
+    description: "ghalint の GitHub release のタグ名 (v1.5.6 など)"
+    required: true
+  sha256:
+    description: "linux amd64 のアーカイブの SHA-256"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: "ghalint"
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        SHA256: ${{ inputs.sha256 }}
+      run: bash "${GITHUB_ACTION_PATH}/ghalint.sh"

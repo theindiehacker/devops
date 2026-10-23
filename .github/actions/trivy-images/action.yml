@@ -1,6 +1,6 @@
 name: "Trivy でスキャンするイメージを決定"
 description: >-
-  trivy.yml の scan-image の matrix を作る。.github/trivy-image.yml があれば列挙されたイメージを、
+  security.yml の scan-image の matrix を作る。.github/trivy-image.yml があれば列挙されたイメージを、
   無ければ Dockerfile を自動検出し、最終ステージ (ほかのステージから使われないステージ) をすべて対象にする
 
 outputs:

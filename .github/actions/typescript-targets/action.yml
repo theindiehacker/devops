@@ -1,0 +1,21 @@
+name: "TypeScript の検査対象を収集"
+description: "依存の導入単位・型チェック単位・Next.js のプロジェクトのディレクトリを JSON 配列で出す"
+
+outputs:
+  roots:
+    description: "導入単位（祖先に package.json を持たない最上位の package.json のディレクトリ）の JSON 配列"
+    value: ${{ steps.collect.outputs.roots }}
+  tsconfigs:
+    description: "型チェック単位（tsconfig.json のあるディレクトリ）の JSON 配列"
+    value: ${{ steps.collect.outputs.tsconfigs }}
+  nextjs:
+    description: "型チェック単位のうち、package.json の依存に next を持つディレクトリの JSON 配列"
+    value: ${{ steps.collect.outputs.nextjs }}
+
+runs:
+  using: composite
+  steps:
+    - name: "検査対象を収集"
+      id: collect
+      shell: bash
+      run: bash "${GITHUB_ACTION_PATH}/typescript-targets.sh"

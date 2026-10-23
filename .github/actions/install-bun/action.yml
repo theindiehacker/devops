@@ -1,0 +1,20 @@
+name: "bun を導入"
+description: "対象 repo の指定ではなく、渡した版の bun を SHA-256 を検証して /usr/local/bin に導入する"
+
+inputs:
+  version:
+    description: "bun の GitHub release のタグ名 (bun-v1.4.3 など)"
+    required: true
+  sha256:
+    description: "bun-linux-x64.zip の SHA-256"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: "Install bun"
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        SHA256: ${{ inputs.sha256 }}
+      run: bash "${GITHUB_ACTION_PATH}/install-bun.sh"

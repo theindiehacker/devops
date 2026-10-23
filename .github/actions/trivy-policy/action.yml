@@ -1,0 +1,20 @@
+name: "Trivy の検知ポリシーを決定"
+description: >-
+  組織の下限 (MEDIUM,HIGH,CRITICAL) に repo の trivy.yaml の severity を足し、
+  承認必須の抑制ファイル (.trivyignore / .trivyignore.yaml) のどちらを渡すかを決める
+
+outputs:
+  severity:
+    description: "trivy-action の severity に渡す値"
+    value: ${{ steps.policy.outputs.severity }}
+  trivyignores:
+    description: "trivy-action の trivyignores に渡す値（空なら Trivy 既定の .trivyignore）"
+    value: ${{ steps.policy.outputs.trivyignores }}
+
+runs:
+  using: composite
+  steps:
+    - name: "検知する severity / 抑制ファイルを決定"
+      id: policy
+      shell: bash
+      run: bash "${GITHUB_ACTION_PATH}/trivy-policy.sh"

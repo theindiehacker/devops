@@ -1,0 +1,26 @@
+name: "tflint で Terraform を lint"
+description: >-
+  インラインの tflint-ignore コメントを禁止し、渡した設定と plugin の置き場所を固定して、
+  変更したファイルのあるディレクトリを lint する（tflint は事前に導入しておく）
+
+inputs:
+  config:
+    description: "tflint の設定（HCL）。対象 repo の .tflint.hcl の代わりに使う"
+    required: true
+  files:
+    description: "変更した *.tf / *.tf.json / *.tfvars / *.tfvars.json の JSON 配列"
+    required: true
+  github-token:
+    description: "tflint --init が GitHub Releases から plugin を取得する際の rate limit 対策のトークン"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: "tflint"
+      shell: bash
+      env:
+        CONFIG: ${{ inputs.config }}
+        FILES: ${{ inputs.files }}
+        INIT_TOKEN: ${{ inputs.github-token }}
+      run: bash "${GITHUB_ACTION_PATH}/tflint.sh"

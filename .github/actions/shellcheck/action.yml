@@ -1,0 +1,24 @@
+name: "shellcheck でシェルスクリプトを lint"
+description: "shellcheck を SHA-256 を検証して導入し、指定したファイルを severity warning 以上で検査する"
+
+inputs:
+  version:
+    description: "shellcheck の GitHub release のタグ名 (v0.11.0 など)"
+    required: true
+  sha256:
+    description: "linux x86_64 のアーカイブの SHA-256"
+    required: true
+  files:
+    description: "検査するファイルの JSON 配列"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: "shellcheck"
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        SHA256: ${{ inputs.sha256 }}
+        FILES: ${{ inputs.files }}
+      run: bash "${GITHUB_ACTION_PATH}/shellcheck.sh"

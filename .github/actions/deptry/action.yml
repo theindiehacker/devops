@@ -1,0 +1,20 @@
+name: "deptry で不要なパッケージを検知"
+description: "uv workspace のメンバーごとに deptry を実行する（uv と依存関係は事前に導入しておく）"
+
+inputs:
+  version:
+    description: "deptry（PyPI）の版"
+    required: true
+  project:
+    description: "検査するプロジェクトのディレクトリ"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: "deptry"
+      shell: bash
+      working-directory: ${{ inputs.project }}
+      env:
+        DEPTRY_VERSION: ${{ inputs.version }}
+      run: bash "${GITHUB_ACTION_PATH}/deptry.sh"

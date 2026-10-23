@@ -1,0 +1,15 @@
+name: "Terraform の検査対象を収集"
+description: "git 管理下の *.tf / *.tf.json があるディレクトリを JSON 配列で出す（.terraform の配下は除く）"
+
+outputs:
+  dirs:
+    description: "検査するディレクトリの JSON 配列"
+    value: ${{ steps.collect.outputs.dirs }}
+
+runs:
+  using: composite
+  steps:
+    - name: "検査対象を収集"
+      id: collect
+      shell: bash
+      run: bash "${GITHUB_ACTION_PATH}/terraform-dirs.sh"

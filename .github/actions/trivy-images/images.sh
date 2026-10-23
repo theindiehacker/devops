@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# trivy.yml の scan-image でビルドしてスキャンするイメージを決め、matrix に渡す JSON 配列を出力 images に書く。
+# security.yml の scan-image でビルドしてスキャンするイメージを決め、matrix に渡す JSON 配列を出力 images に書く。
 #   - .github/trivy-image.yml があれば、列挙された image だけをビルドする
 #   - 無ければ Dockerfile / Dockerfile.* / *.Dockerfile を自動検出し、置き場所を build context に、
 #     最終ステージ (ほかのステージから FROM・COPY --from・RUN --mount の from= で使われないステージ) をすべて target にする。
