@@ -155,8 +155,7 @@ jobs:
             echo "::error::mikefarah/yq が見つかりません（読めないリポジトリを参照するファイルの振り分けに必要）"
             exit 1
           fi
-          # 旧名（devops）は改名前の参照が残る caller 用。全 caller の移行後に削除する
-          self_ref="^${OWNER}/(${unreadable/github-workflows/github-workflows|devops})/"
+          self_ref="^${OWNER}/(${unreadable})/"
           for t in "${targets[@]}"; do
             # YAML を解析して uses: の値を再帰的に集める（flow 形式・引用符付きキー・アンカーも対象。zizmor と同じ見え方にする）。
             # 解析に失敗したファイルは refs が空になり online 側に倒れる（fatal で気付ける安全側）
