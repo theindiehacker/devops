@@ -1,7 +1,7 @@
 # 🕷️ DAST（動的アプリケーションセキュリティテスト）要件定義・設計
 
 > 📝 ステータス: **設計レビュー中**（実装は未着手）<br/>
-> 対象: devops（仕組み）・app.fastship.jp（最初の導入先）
+> 対象: github-workflows（仕組み）・app.fastship.jp（最初の導入先）
 
 ## 1. 🎯 目的
 起動したアプリに攻撃リクエストを送り、コードを読むだけでは見つからない脆弱性をマージ前に見つける。
@@ -62,11 +62,11 @@ ZAP は公式イメージ（`ghcr.io/zaproxy/zaproxy:stable`）を digest 固定
 
 ## 4. 🏗️ 設計
 ### 4.1 全体像
-Trivy などと同じく、devops の**必須ワークフロー**で全 repo に強制する。必須ワークフローは inputs を受け取れないため、起動方法とスキャン対象は repo の `.github/dast.yml` で渡す（Trivy の `.github/trivy-image.yml` と同じ方式）。
+Trivy などと同じく、github-workflows の**必須ワークフロー**で全 repo に強制する。必須ワークフローは inputs を受け取れないため、起動方法とスキャン対象は repo の `.github/dast.yml` で渡す（Trivy の `.github/trivy-image.yml` と同じ方式）。
 
 ```mermaid
 flowchart LR
-  pr(["PR"]) --> wf["devops<br/>dast.yml<br/>（必須ワークフロー）"]
+  pr(["PR"]) --> wf["github-workflows<br/>dast.yml<br/>（必須ワークフロー）"]
   wf -->|読む| conf["repo の<br/>.github/dast.yml"]
   wf -->|"docker compose<br/>--profile dast up"| app["🐳 PR のコードのアプリ<br/>（localhost）"]
   wf --> zap["🕷️ ZAP"]
@@ -141,11 +141,11 @@ flowchart LR
 
 | repo | ファイル | 内容 | Phase |
 |:--|:--|:--|:--:|
-| devops | `.github/actions/dast/` | 起動・ZAP 実行・レポート保存の composite action | 1 |
-| devops | `.github/workflows/dast.yml` | PR の必須ワークフロー | 1 |
-| devops | `docs/SETUP.md` | 必須ワークフローと承認必須ファイルに追加 | 1 |
+| github-workflows | `.github/actions/dast/` | 起動・ZAP 実行・レポート保存の composite action | 1 |
+| github-workflows | `.github/workflows/dast.yml` | PR の必須ワークフロー | 1 |
+| github-workflows | `docs/SETUP.md` | 必須ワークフローと承認必須ファイルに追加 | 1 |
 | app.fastship.jp | `.github/dast.yml` / `compose.yaml` | スキャン対象と起動方法 | 1 |
-| devops | `.github/workflows/dast-weekly.yml` | 週次フルスキャン（reusable） | 2 |
+| github-workflows | `.github/workflows/dast-weekly.yml` | 週次フルスキャン（reusable） | 2 |
 | app.fastship.jp | `.github/workflows/dast-weekly.yml` | 週次スキャンの呼び出し | 2 |
 | app.fastship.jp | `Taskfile.yml` | `task security:dast`（ローカル実行） | 2 |
 

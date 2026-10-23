@@ -1,6 +1,6 @@
 # Contributing
 
-`theindiehacker/devops` は、組織全体に配布する Claude Code プラグインのマーケットプレイス（`fastship`）を兼ねています。このドキュメントではプラグインの開発方法を説明します。
+`theindiehacker/github-workflows` は、組織全体に配布する Claude Code プラグインのマーケットプレイス（`fastship`）を兼ねています。このドキュメントではプラグインの開発方法を説明します。
 
 ## 構成
 

@@ -26,9 +26,9 @@ on:
 permissions: {}
 
 # 同じ PR に新しい push があれば、古い run をキャンセルする。
-# concurrency group は repo 内の全 workflow で共有されるため、各 repo の workflow と重ならないよう devops- を付ける
+# concurrency group は repo 内の全 workflow で共有されるため、各 repo の workflow と重ならないよう github-workflows- を付ける
 concurrency:
-  group: devops-bundle-size-${{ github.event.pull_request.number }}
+  group: github-workflows-bundle-size-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -201,7 +201,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           TARGETS: ${{ needs.detect.outputs.targets }}
-          MARKER: "<!-- devops/bundle-size -->"
+          MARKER: "<!-- github-workflows/bundle-size -->"
         run: |
           set -euo pipefail
           body="$(cat "${RUNNER_TEMP}/body.md")"$'\n\n'"${MARKER}"
