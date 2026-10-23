@@ -8,6 +8,9 @@ inputs:
   dirs:
     description: "init するディレクトリの JSON 配列"
     required: true
+  plugin-cache-dir:
+    description: "provider のキャッシュの置き場所（TF_PLUGIN_CACHE_DIR）"
+    required: true
 
 outputs:
   initialized:
@@ -22,4 +25,5 @@ runs:
       shell: bash
       env:
         DIRS: ${{ inputs.dirs }}
+        TF_PLUGIN_CACHE_DIR: ${{ inputs.plugin-cache-dir }}
       run: bash "${GITHUB_ACTION_PATH}/terraform-init.sh"

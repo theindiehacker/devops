@@ -15,4 +15,5 @@ shellcheck --version
 list="${RUNNER_TEMP}/shellcheck-targets.txt"
 jq -r '.[]' <<< "${FILES}" > "${list}"
 mapfile -t targets < "${list}"
-shellcheck --severity=warning --external-sources "${targets[@]}"
+# 出力には対象 repo のパスやソースが含まれるため、全行に "| " を付けてワークフローコマンドを防ぐ（runner は行頭の空白を除いて判定するため字下げでは防げない）
+shellcheck --severity=warning --external-sources "${targets[@]}" 2>&1 | sed 's/\r/\\r/g; s/^/| /'
