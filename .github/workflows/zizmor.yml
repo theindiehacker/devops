@@ -128,7 +128,7 @@ jobs:
           fi
           mapfile -t targets < "${list}"
 
-          # 組織の reusable workflow を置くリポジトリ（<org>/devops・<org>/terraform-modules）が private だと、対象リポジトリの
+          # 組織の reusable workflow を置くリポジトリ（<org>/github-workflows・<org>/terraform-modules）が private だと、対象リポジトリの
           # github.token では参照先を読めず、それらの reusable workflow を参照するファイル（Claude レビューや Terraform の caller 等）の
           # impostor-commit が findings ではなく fatal で終了する（#21）。そこで実行トークンで読めるかをリポジトリごとに先に確認し、
           # すべて読めるなら従来どおり全件 online、読めないリポジトリがあれば、それらのみを参照するファイルを online 監査なしで実行する。
@@ -139,9 +139,9 @@ jobs:
           #       https://github.com/zizmorcore/zizmor/issues/1350
           online=()
           offline=()
-          # 読めるリポジトリ（public の devops 等）は fork 由来の impostor commit が成立しうるため、免除しない
+          # 読めるリポジトリ（public の github-workflows 等）は fork 由来の impostor commit が成立しうるため、免除しない
           unreadable=""
-          for repo in devops terraform-modules; do
+          for repo in github-workflows terraform-modules; do
             curl -fs -o /dev/null -H "Authorization: Bearer ${GH_TOKEN}" "${GITHUB_API_URL}/repos/${OWNER}/${repo}" \
               || unreadable="${unreadable:+${unreadable}|}${repo}"
           done
@@ -155,8 +155,8 @@ jobs:
             echo "::error::mikefarah/yq が見つかりません（読めないリポジトリを参照するファイルの振り分けに必要）"
             exit 1
           fi
-          # 旧名（github-workflows）は改名前の参照が残る caller 用。全 caller の移行後に削除する
-          self_ref="^${OWNER}/(${unreadable/devops/devops|github-workflows})/"
+          # 旧名（devops）は改名前の参照が残る caller 用。全 caller の移行後に削除する
+          self_ref="^${OWNER}/(${unreadable/github-workflows/github-workflows|devops})/"
           for t in "${targets[@]}"; do
             # YAML を解析して uses: の値を再帰的に集める（flow 形式・引用符付きキー・アンカーも対象。zizmor と同じ見え方にする）。
             # 解析に失敗したファイルは refs が空になり online 側に倒れる（fatal で気付ける安全側）
@@ -165,7 +165,7 @@ jobs:
             # owner / repo 名は大文字小文字を区別しない
             if [ -n "${refs}" ] && ! grep -qivE "${self_ref}" <<< "${refs}"; then
               offline+=("${t}")
-              echo "::notice file=${t}::読めないリポジトリ（${unreadable}）のみを参照するため online 監査を省略しました（理由は devops の .github/workflows/zizmor.yml を参照）"
+              echo "::notice file=${t}::読めないリポジトリ（${unreadable}）のみを参照するため online 監査を省略しました（理由は github-workflows の .github/workflows/zizmor.yml を参照）"
             else
               online+=("${t}")
               # 読めないリポジトリと他の action の参照が混在すると online 側で generic な fatal になるため、原因を先に示す

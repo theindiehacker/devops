@@ -99,7 +99,7 @@ jobs:
       - name: "スキャンするイメージを決定"
         id: images
         # 必須ワークフローは対象 repo で動くため、この repo の action はパスではなく SHA で参照する
-        uses: theindiehacker/devops/.github/actions/trivy-images@c07f900e075aa182c357be4492ae720e437d96a0
+        uses: theindiehacker/github-workflows/.github/actions/trivy-images@c07f900e075aa182c357be4492ae720e437d96a0
 
   scan-fs:
     name: "依存パッケージ / IaC をスキャン"
