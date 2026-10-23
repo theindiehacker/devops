@@ -86,7 +86,7 @@ run "検知ワークフローとルールセットの定義の変更には_secur
 
   assert {
     condition = alltrue([
-      for pattern in [".github/workflows/**", "terraform/github/**"] :
+      for pattern in [".github/workflows/**", ".github/actions/**", "terraform/github/**"] :
       contains(github_organization_ruleset.workflow_change_review.rules[0].pull_request[0].required_reviewers[0].file_patterns, pattern)
     ])
     error_message = "必須ワークフローの実体とルールセットの定義は、検知を弱められるため security チームの承認を必須にする"

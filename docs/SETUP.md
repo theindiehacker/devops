@@ -87,18 +87,41 @@ security チーム（`teams.tf`）は、Gitleaks や Trivy などがセキュリ
 | ✅ PR の承認を必須化 | 全 repo の default branch | 人間の承認 1 名以上。bypass は Renovate 用 GitHub App（`renovate-<org 名>`。PR のときだけ） |
 | 🛡️ 脆弱性・IaC 設定ミス検知 | 全 repo の default branch | `security.yml` の成功を必須にする |
 | ✔️ セキュリティ設定変更の承認必須化 | 全 repo の default branch | `.gitleaksignore` / `.trivyignore` などの変更に security チームの承認を必須にする |
-| 🛠️ 検知ワークフロー変更の承認必須化 | この repo の default branch | `.github/workflows/**`・`terraform/github/**` の変更に security チームの承認を必須にする |
+| 🛠️ 検知ワークフロー変更の承認必須化 | この repo の default branch | `.github/workflows/**`・`.github/actions/**`・`terraform/github/**` の変更に security チームの承認を必須にする |
 | ✏️ スタイルチェック | 全 repo の default branch | `style.yml` の成功を必須にする |
 | 🚫 機密ファイルの push 禁止 | 全 repo | `.env`・秘密鍵・`*.tfstate` などの push を拒否する |
 | 🔒 リリースタグの変更禁止 | この repo の `v*` タグ | タグの更新・削除を禁止する（「5.」） |
 
 > ⚠️ 承認者本人が作成した PR は自己承認できない。security チームのメンバーが 1 人だけの間は、承認を必須にする 3 つのルールセットの bypass に org 管理者が入る（`teams.tf` の `security_members` から決まる）。
 
+### 🛡️ 脆弱性・IaC 設定ミス検知
+
+`security.yml` は次を検査する。常に動くのは `scan` の job だけで、PR のコードは実行しない（イメージのビルドは `scan-image` の job で行う）。
+
+| 検査 | 内容 |
+|:----|:----|
+| Gitleaks | PR のコミットに混入したシークレット（圧縮ファイルの中も含む） |
+| ghalint | ワークフローのセキュリティポリシー（permissions 未設定・action の SHA 未固定など）。ワークフローを変更したときだけ |
+| zizmor | GitHub Actions の設定の脆弱性（severity HIGH 以上）。ワークフロー・action 定義などを変更したときだけ |
+| Semgrep | アプリケーションコード（ルールセット `p/default`・severity ERROR）。PR で新規に増えた検出のみ |
+| Trivy | 依存パッケージの脆弱性と IaC の設定ミス（MEDIUM 以上・修正版があるもの）、Dockerfile からビルドしたイメージの脆弱性 |
+
 ### ✏️ スタイルチェック
+
+`style.yml` は次を検査する。常に動くのは `lint` の job だけで、ほかの job は対象のファイルがあるときだけ動く。
+
+| job | 検査内容 |
+|:----|:--------|
+| `lint` | ワークフロー定義の構文（actionlint）・シェルスクリプトの lint（shellcheck）・Terraform の書式（terraform fmt）と lint（tflint。terraform ruleset の `all` プリセット + aws / google ruleset。設定は全リポジトリ共通で固定）・Python の規約（uv での依存管理）・lint・書式・セキュリティ（ruff の `S` ルール） |
+| `terraform` | Terraform の validate・lock ファイルと `required_providers` の整合・test（`*.tftest.hcl`） |
+| `python` | Python の型（Pyright）・モジュールの依存関係（lint-imports）・不要なパッケージ（deptry）。`uv.lock` のあるディレクトリごと |
+| `typescript` | TypeScript の規約（Bun での依存管理）・lint・書式・型・未使用パッケージ |
+| `bundle-size-measure` / `bundle-size-comment` | フロントエンド（Next.js / Astro）の JS・CSS の gzip 後のサイズの増減を PR にコメント（報告だけで失敗しない） |
 
 > 必須ワークフローは、対象 repo のコードを実行してよい（`style.yml` の `python` / `typescript` job の `uv sync` / `bun install` による依存導入と、その環境上で動く Pyright / lint-imports / deptry / Biome / knip / tsc、`terraform` job の `terraform init` / `validate` / `test` が実行する provider・module、`bundle-size-measure` job の `bun install` とビルドなど）。ただし次を守る。
 > - `permissions` は read のみとし、secrets を使わない（例外: `terraform` job の `terraform init` の step にだけ、private の Module Registry（registry.fastship.jp）の読み取りトークン `REGISTRY_TOKEN` を渡す。PR にコメントする `bundle-size-comment` job にだけ `pull-requests: write` を付ける。この job は checkout せず、PR のコードを動かさない）。トリガーは `pull_request` とし、`pull_request_target` では動かさない
 > - `actions/checkout` は `persist-credentials: false` にする
+> - PR のコードを実行する処理は `lint` と別の job にし、対象のファイルがあるときだけ動かす（常に動く `lint` の job では PR のコードを実行しない）
 > - repo の環境に依存して失敗し得る前提は、下の「導入時の前提」に書く。対応できない repo は「例外運用」で外す
 >
 > この条件なら、PR のコードが動いても、その repo の通常の CI と同じで越えられる権限の境界は無い。
