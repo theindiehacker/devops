@@ -12,8 +12,9 @@ locals {
 # Gitleaks や Trivy などがセキュリティ検知をした時に対応するチーム。
 # セキュリティの設定・検知ワークフローを変える PR は、このチームの承認がないとマージできない（rulesets.tf）
 resource "github_team" "security" {
-  name    = "security"
-  privacy = "closed"
+  name        = "security"
+  description = "🛡️ セキュリティチーム"
+  privacy     = "closed"
 }
 
 resource "github_team_members" "security" {
