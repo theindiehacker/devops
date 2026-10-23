@@ -12,6 +12,8 @@ resource "github_actions_organization_permissions" "this" {
     patterns_allowed = [
       "anthropics/claude-code-action@*",
       "aquasecurity/trivy-action@*",
+      # aquasecurity/trivy-action が内部で使用する
+      "aquasecurity/setup-trivy@*",
       # python（style.yml）が使用する
       "astral-sh/ruff-action@*",
       "astral-sh/setup-uv@*",
