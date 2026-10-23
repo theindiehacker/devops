@@ -143,7 +143,7 @@ flowchart LR
 |:--|:--|:--|:--:|
 | github-workflows | `.github/actions/dast/` | 起動・ZAP 実行・レポート保存の composite action | 1 |
 | github-workflows | `.github/workflows/dast.yml` | PR の必須ワークフロー | 1 |
-| github-workflows | `docs/SETUP.md` | 必須ワークフローと承認必須ファイルに追加 | 1 |
+| github-workflows | `terraform/github/rulesets.tf` | 必須ワークフローと承認必須ファイルに追加 | 1 |
 | app.fastship.jp | `.github/dast.yml` / `compose.yaml` | スキャン対象と起動方法 | 1 |
 | github-workflows | `.github/workflows/dast-weekly.yml` | 週次フルスキャン（reusable） | 2 |
 | app.fastship.jp | `.github/workflows/dast-weekly.yml` | 週次スキャンの呼び出し | 2 |
