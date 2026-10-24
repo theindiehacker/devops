@@ -70,30 +70,7 @@ Claude Code on the web で pre-commit を動かすには、`.claude/settings.jso
 ```
 
 ## 🧩 Claude Code プラグイン
-このリポジトリは Claude Code プラグインのマーケットプレイス（`fastship`）を兼ねる。プラグインの開発方法は [CONTRIBUTING.md](./CONTRIBUTING.md) を参照。
-
-### 🧰 Install
-```
-/plugin marketplace add https://github.com/theindiehacker/github-workflows.git
-```
-
-<details><summary><b>🛠️ 開発(<code>/dev:</code>)プラグイン</b></summary>
-
-```
-/plugin install security-guidance@claude-plugins-official
-/plugin install dev@fastship  # 依存する ruleset@fastship も有効になる
-```
-
-</details>
-
-### 🔄 Update
-マーケットプレイスを最新化してから、インストール済みプラグインを更新する。
-
-```
-/plugin marketplace update fastship
-```
-
-以降、`/plugin` コマンドからプラグイン一覧・更新状況を確認できる。
+マーケットプレイス（`fastship`）は [theindiehacker/fastship-plugin](https://github.com/theindiehacker/fastship-plugin) に移した。導入・更新の手順は同リポジトリを参照。
 
 ## ❓ 使い方
 ### 🎊 セットアップ
