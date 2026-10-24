@@ -4,9 +4,10 @@ on:
   workflow_call:
     inputs:
       effort:
-        description: "既定の effort (low / medium / high / xhigh / max)。コメントでの指定が優先。空なら Claude Code の既定値"
+        description: "既定の effort (low / medium / high / xhigh / max)。コメントでの指定が優先。未指定なら xhigh、空文字なら Claude Code の既定値"
         type: string
         required: false
+        default: xhigh
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         description: "claude setup-token で発行した OAuth トークン（ANTHROPIC_API_KEY とどちらか一方）"
@@ -144,4 +145,4 @@ jobs:
             --allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__github__create_and_submit_pull_request_review"
           # 判定レビューは Claude 自身に送信させる (指示は APPEND_SYSTEM_PROMPT)。action の Claude App
           # トークンで動く MCP を経由するため、投稿者が claude[bot] になり他のコメントと一致する
-          prompt: '/code-review --comment ${{ env.PR_NUMBER }}'
+          prompt: '/code-review --max-findings all --comment ${{ env.PR_NUMBER }}'
