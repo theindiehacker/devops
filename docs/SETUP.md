@@ -198,6 +198,8 @@ git ls-remote https://github.com/theindiehacker/github-workflows 'refs/tags/v1.0
 
 3. main にマージ後、PR を作るとコードレビューが自動で投稿されることを確認する (再レビューは PR に `/code-review` とコメントする)
 
+セキュリティレビューは、コメント (`/security-review`) で頼んだときだけ動く。PR の作成時 (Draft は Ready にしたとき) にも動かすには、`security-review` job の `if` に `code-review` job と同じ `pull_request` の条件を足す (FastShip の `/dev:setup` が足す)。
+
 > 💡 本リポジトリは `github-workflows` → `devops` → `github-workflows` と改名した。git clone や API は旧名からリダイレクトされるが、`uses:` はリダイレクトされず、旧名の `uses: theindiehacker/devops/...` はワークフローの起動時点で失敗する。そのため `theindiehacker/github-workflows/...` に書き換える（旧名 `devops` でリポジトリを作り直すと参照先が乗っ取られるため、旧名は再利用しない）。ruleset はリポジトリ名ではなく ID で紐付くため、改名後の再設定は不要
 
 ---
