@@ -100,9 +100,11 @@ jobs:
             esac
           done
 
-          echo "model=$model" >> "$GITHUB_OUTPUT"
-          echo "effort=$effort" >> "$GITHUB_OUTPUT"
-          echo "effort_arg=${effort:+--effort $effort}" >> "$GITHUB_OUTPUT"
+          {
+            echo "model=$model"
+            echo "effort=$effort"
+            echo "effort_arg=${effort:+--effort $effort}"
+          } >> "$GITHUB_OUTPUT"
           echo "レビューモデル: $model ${effort:+--effort $effort}"
 
       - name: Checkout repository
