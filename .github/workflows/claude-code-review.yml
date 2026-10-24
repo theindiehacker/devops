@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       effort:
-        description: "既定の effort (low / medium / high / xhigh / max)。コメントでの指定が優先。空なら Claude Code の既定値"
+        description: "既定の effort (low / medium / high / xhigh / max)。Claude Code の effort と /code-review の段階 (レビューの深さ) に渡す。コメントでの指定が優先。空なら既定値"
         type: string
         required: false
     secrets:
@@ -89,7 +89,11 @@ jobs:
           set -euo pipefail
 
           model=claude-opus-5-5
-          effort="$DEFAULT_EFFORT"
+          # /code-review の引数になるため、ultra (クラウドレビュー) や --fix などを通さない
+          case "$DEFAULT_EFFORT" in
+            ""|low|medium|high|xhigh|max) effort="$DEFAULT_EFFORT" ;;
+            *) echo "::error::effort は low / medium / high / xhigh / max のいずれかを指定してください"; exit 1 ;;
+          esac
 
           # read は 1 行目のみ読む (2 行目以降は署名フッター等)。PR の作成時は空で、既定のまま
           read -ra words <<< "${COMMENT_BODY//$'\r'/}"
@@ -100,11 +104,8 @@ jobs:
             esac
           done
 
-          {
-            echo "model=$model"
-            echo "effort=$effort"
-            echo "effort_arg=${effort:+--effort $effort}"
-          } >> "$GITHUB_OUTPUT"
+          echo "model=$model" >> "$GITHUB_OUTPUT"
+          echo "effort=$effort" >> "$GITHUB_OUTPUT"
           echo "レビューモデル: $model ${effort:+--effort $effort}"
 
       - name: Checkout repository
@@ -142,10 +143,10 @@ jobs:
           show_full_output: false
           claude_args: |
             --model ${{ steps.preflight.outputs.model }}
-            ${{ steps.preflight.outputs.effort_arg }}
+            ${{ steps.preflight.outputs.effort && format('--effort {0}', steps.preflight.outputs.effort) }}
             --max-turns 200
             --allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__github__create_and_submit_pull_request_review"
           # 判定レビューは Claude 自身に送信させる (指示は APPEND_SYSTEM_PROMPT)。action の Claude App
           # トークンで動く MCP を経由するため、投稿者が claude[bot] になり他のコメントと一致する
-          # /code-review の段階は CLI の --effort では決まらず、省くと前回の段階になるため明示する
+          # /code-review の段階は CLI の --effort では決まらないため、effort の指定があればここでも渡す
           prompt: '/code-review ${{ steps.preflight.outputs.effort }} --comment ${{ env.PR_NUMBER }}'
